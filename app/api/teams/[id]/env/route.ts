@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTeamConfig, updateTeamEnv } from '@/actions/teams';
+import { requireAuth } from '@/lib/auth/middleware';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authCheck = await requireAuth(request);
+  if (!authCheck.authenticated) {
+    return authCheck.response!;
+  }
+
   const { id } = await params;
   try {
     const config = await getTeamConfig(id);
@@ -33,6 +39,11 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authCheck = await requireAuth(request);
+  if (!authCheck.authenticated) {
+    return authCheck.response!;
+  }
+
   const { id } = await params;
   try {
     const { env } = await request.json();

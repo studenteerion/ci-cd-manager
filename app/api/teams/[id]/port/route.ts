@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTeamHostPort, updateTeamHostPort } from '@/actions/teams';
+import { requireAuth } from '@/lib/auth/middleware';
 
 export async function GET(
   request: NextRequest,
   { params: paramPromise }: { params: Promise<{ id: string }> }
 ) {
+  const authCheck = await requireAuth(request);
+  if (!authCheck.authenticated) {
+    return authCheck.response!;
+  }
+
   try {
     const { id } = await paramPromise;
     const result = await getTeamHostPort(id);
@@ -33,6 +39,11 @@ export async function PATCH(
   request: NextRequest,
   { params: paramPromise }: { params: Promise<{ id: string }> }
 ) {
+  const authCheck = await requireAuth(request);
+  if (!authCheck.authenticated) {
+    return authCheck.response!;
+  }
+
   try {
     const { id } = await paramPromise;
     const { hostPort } = await request.json();
