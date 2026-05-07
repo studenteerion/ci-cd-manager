@@ -2,7 +2,7 @@ import { exec, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
-import { isTesting, logTestingMode } from '../env';
+import { isTesting, logTestingMode, adjustPathForTesting } from '../env';
 
 const execAsync = promisify(exec);
 
@@ -63,8 +63,9 @@ export async function restartWebhookServer(): Promise<void> {
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {
+  const adjustedPath = adjustPathForTesting(filePath);
   try {
-    await fs.access(filePath);
+    await fs.access(adjustedPath);
     return true;
   } catch {
     return false;
@@ -72,17 +73,20 @@ export async function fileExists(filePath: string): Promise<boolean> {
 }
 
 export async function createDirectory(dirPath: string): Promise<void> {
-  await fs.mkdir(dirPath, { recursive: true });
+  const adjustedPath = adjustPathForTesting(dirPath);
+  await fs.mkdir(adjustedPath, { recursive: true });
 }
 
 export async function writeFile(filePath: string, content: string): Promise<void> {
-  const dir = path.dirname(filePath);
+  const adjustedPath = adjustPathForTesting(filePath);
+  const dir = path.dirname(adjustedPath);
   await createDirectory(dir);
-  await fs.writeFile(filePath, content, 'utf-8');
+  await fs.writeFile(adjustedPath, content, 'utf-8');
 }
 
 export async function readFile(filePath: string): Promise<string> {
-  return fs.readFile(filePath, 'utf-8');
+  const adjustedPath = adjustPathForTesting(filePath);
+  return fs.readFile(adjustedPath, 'utf-8');
 }
 
 export async function readJSON<T>(filePath: string): Promise<T> {
@@ -91,14 +95,16 @@ export async function readJSON<T>(filePath: string): Promise<T> {
 }
 
 export async function writeJSON<T>(filePath: string, data: T): Promise<void> {
-  const dir = path.dirname(filePath);
+  const adjustedPath = adjustPathForTesting(filePath);
+  const dir = path.dirname(adjustedPath);
   await createDirectory(dir);
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  await fs.writeFile(adjustedPath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
 export async function listDirectories(dirPath: string): Promise<string[]> {
+  const adjustedPath = adjustPathForTesting(dirPath);
   try {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    const entries = await fs.readdir(adjustedPath, { withFileTypes: true });
     return entries
       .filter(entry => entry.isDirectory())
       .map(entry => entry.name)
@@ -109,7 +115,8 @@ export async function listDirectories(dirPath: string): Promise<string[]> {
 }
 
 export async function chmod(filePath: string, mode: number): Promise<void> {
-  await fs.chmod(filePath, mode);
+  const adjustedPath = adjustPathForTesting(filePath);
+  await fs.chmod(adjustedPath, mode);
 }
 
 export async function restartContainers(teamDir: string): Promise<void> {
