@@ -13,6 +13,9 @@ import {
   reloadCaddy,
   restartWebhookServer,
   listDirectories,
+  restartContainers,
+  deployTeam,
+  updateWebhookBranch,
 } from '@/lib/server';
 import {
   generateCaddyConfig,
@@ -141,6 +144,113 @@ export async function systemRestartWebhook(): Promise<{ success: boolean; messag
     return { success: true, message: 'Webhook server restarted successfully' };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to restart webhook server';
+    return { success: false, message };
+  }
+}
+
+export interface TeamConfig {
+  name: string;
+  domain: string;
+  repository: string;
+  branch: string;
+  env: Record<string, string>;
+}
+
+export async function getTeamConfig(teamName: string): Promise<TeamConfig | null> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+
+    const envPath = path.join(teamDir, '.env');
+    const envContent = await readFile(envPath);
+    const env: Record<string, string> = {};
+    envContent.split('\n').forEach(line => {
+      const [key, value] = line.split('=');
+      if (key && value) {
+        env[key.trim()] = value.trim();
+      }
+    });
+
+    const hooks = await readJSON<any[]>(HOOKS_JSON_PATH);
+    const teamHook = hooks.find(h => h.id.startsWith(`team-${sanitizedTeamName}-`));
+    const branch = teamHook?.['match-branch'] || 'main';
+
+    return {
+      name: sanitizedTeamName,
+      domain: 'unknown',
+      repository: 'unknown',
+      branch,
+      env,
+    };
+  } catch (error) {
+    console.error('Failed to get team config:', error);
+    return null;
+  }
+}
+
+export async function updateTeamEnv(
+  teamName: string,
+  envVariables: Record<string, string>
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+
+    const envContent = Object.entries(envVariables)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n');
+    
+    const envPath = path.join(teamDir, '.env');
+    await writeFile(envPath, envContent);
+
+    await restartContainers(teamDir);
+
+    return {
+      success: true,
+      message: `Environment variables updated and containers restarted for team '${sanitizedTeamName}'`,
+    };
+  } catch (error) {
+    console.error('Failed to update team env:', error);
+    const message = error instanceof Error ? error.message : 'Failed to update environment variables';
+    return { success: false, message };
+  }
+}
+
+export async function manualDeployTeam(teamName: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+
+    await deployTeam(teamDir);
+
+    return {
+      success: true,
+      message: `Deployment triggered successfully for team '${sanitizedTeamName}'`,
+    };
+  } catch (error) {
+    console.error('Failed to deploy team:', error);
+    const message = error instanceof Error ? error.message : 'Failed to deploy team';
+    return { success: false, message };
+  }
+}
+
+export async function updateTeamBranch(
+  teamName: string,
+  newBranch: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+    await updateWebhookBranch(HOOKS_JSON_PATH, sanitizedTeamName, newBranch);
+    await restartWebhookServer();
+
+    return {
+      success: true,
+      message: `Branch updated to '${newBranch}' for team '${sanitizedTeamName}'. Webhook restarted.`,
+    };
+  } catch (error) {
+    console.error('Failed to update team branch:', error);
+    const message = error instanceof Error ? error.message : 'Failed to update branch';
     return { success: false, message };
   }
 }

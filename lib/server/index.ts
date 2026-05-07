@@ -83,3 +83,44 @@ export async function listDirectories(dirPath: string): Promise<string[]> {
 export async function chmod(filePath: string, mode: number): Promise<void> {
   await fs.chmod(filePath, mode);
 }
+
+export async function restartContainers(teamDir: string): Promise<void> {
+  await executeCommand(`cd "${teamDir}" && docker compose up -d`);
+}
+
+export async function deployTeam(teamDir: string): Promise<void> {
+  const deployScriptPath = `${teamDir}/deploy.sh`;
+  if (!await fileExists(deployScriptPath)) {
+    throw new Error(`Deploy script not found at ${deployScriptPath}`);
+  }
+  await executeCommand(`bash "${deployScriptPath}"`);
+}
+
+export async function updateWebhookBranch(
+  hooksJsonPath: string,
+  teamName: string,
+  newBranch: string
+): Promise<void> {
+  const hooks = JSON.parse(await readFile(hooksJsonPath));
+  const hookIndex = hooks.findIndex((h: any) => h.id === `team-${teamName}-${hooks.find((h: any) => h.id.startsWith(`team-${teamName}`))?.['match-branch']}`);
+  
+  // Find hook by team name and update branch
+  const teamHook = hooks.find((h: any) => h.id.startsWith(`team-${teamName}-`));
+  if (!teamHook) {
+    throw new Error(`Hook not found for team ${teamName}`);
+  }
+  
+  // Remove old hook and create new one with updated branch
+  const hookIndexToRemove = hooks.findIndex((h: any) => h.id === teamHook.id);
+  hooks.splice(hookIndexToRemove, 1);
+  
+  // Create updated hook with new branch
+  const updatedHook = {
+    ...teamHook,
+    id: `team-${teamName}-${newBranch}`,
+    'match-branch': newBranch,
+  };
+  
+  hooks.push(updatedHook);
+  await writeJSON(hooksJsonPath, hooks);
+}

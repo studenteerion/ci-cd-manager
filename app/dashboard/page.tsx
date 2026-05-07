@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CreateTeamForm } from '@/components/CreateTeamForm';
 import { TeamList } from '@/components/TeamList';
+import { TeamDetailsModal } from '@/components/TeamDetailsModal';
 import { TeamInfo } from '@/actions/teams';
 
 export default function DashboardPage() {
@@ -13,6 +14,8 @@ export default function DashboardPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [systemLoading, setSystemLoading] = useState(false);
   const [systemStatus, setSystemStatus] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     const fetchTeams = async () => {
@@ -71,6 +74,16 @@ export default function DashboardPage() {
     setRefreshKey(prev => prev + 1);
   };
 
+  const handleTeamSelect = (teamId: string) => {
+    setSelectedTeam(teamId);
+    setIsModalOpen(true);
+  };
+
+  const handleModalClose = () => {
+    setIsModalOpen(false);
+    setSelectedTeam(null);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
@@ -127,10 +140,20 @@ export default function DashboardPage() {
           {loading ? (
             <div className="text-center text-slate-600">Loading teams...</div>
           ) : (
-            <TeamList teams={teams} refreshKey={refreshKey} />
+            <TeamList teams={teams} refreshKey={refreshKey} onTeamSelect={handleTeamSelect} />
           )}
         </div>
       </main>
+
+      {/* Team Details Modal */}
+      {selectedTeam && (
+        <TeamDetailsModal
+          teamId={selectedTeam}
+          isOpen={isModalOpen}
+          onClose={handleModalClose}
+          onRefresh={() => setRefreshKey(prev => prev + 1)}
+        />
+      )}
     </div>
   );
 }

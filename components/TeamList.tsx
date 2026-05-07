@@ -6,9 +6,10 @@ import { TeamInfo } from '@/actions/teams';
 interface TeamListProps {
   teams: TeamInfo[];
   refreshKey: number;
+  onTeamSelect?: (teamId: string) => void;
 }
 
-export function TeamList({ teams: initialTeams, refreshKey }: TeamListProps) {
+export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect }: TeamListProps) {
   const [teams, setTeams] = useState<TeamInfo[]>(initialTeams);
   const [loading, setLoading] = useState(false);
 
@@ -54,6 +55,12 @@ export function TeamList({ teams: initialTeams, refreshKey }: TeamListProps) {
           <div className="mt-4 text-sm text-slate-600">
             <p>Directory: <code className="bg-slate-100 px-2 py-1 rounded">/opt/apps/team-{team.name}</code></p>
           </div>
+          <button
+            onClick={() => onTeamSelect?.(team.name)}
+            className="mt-4 w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-medium"
+          >
+            ⚙️ Settings
+          </button>
         </div>
       ))}
     </div>
