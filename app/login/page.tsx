@@ -110,11 +110,6 @@ export default function LoginPage() {
               )}
             </button>
           </form>
-
-          {/* Footer */}
-          <div className="mt-8 pt-6 border-t border-slate-200 text-center text-slate-600 text-sm">
-            <p>Check <code className="bg-slate-100 px-2 py-1 rounded font-mono">users.json</code> for credentials</p>
-          </div>
         </div>
       </div>
     </div>
