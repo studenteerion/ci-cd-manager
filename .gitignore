@@ -31,6 +31,9 @@ yarn-error.log*
 .env.production.local
 .env.development.local
 
+# Configuration files with sensitive data
+users.json
+
 # IDE
 .idea/
 .vscode/
