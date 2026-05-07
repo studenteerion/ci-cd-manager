@@ -1,0 +1,85 @@
+import { exec, spawn } from 'child_process';
+import { promises as fs } from 'fs';
+import { promisify } from 'util';
+import * as path from 'path';
+
+const execAsync = promisify(exec);
+
+export async function executeCommand(command: string): Promise<{ stdout: string; stderr: string }> {
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      timeout: 60000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { stdout, stderr };
+  } catch (error: any) {
+    throw new Error(`Command failed: ${error.message}`);
+  }
+}
+
+export async function generateWebhookSecret(): Promise<string> {
+  const { stdout } = await executeCommand('openssl rand -hex 32');
+  return stdout.trim();
+}
+
+export async function gitClone(repoUrl: string, targetDir: string): Promise<void> {
+  await executeCommand(`git clone "${repoUrl}" "${targetDir}"`);
+}
+
+export async function reloadCaddy(): Promise<void> {
+  await executeCommand('systemctl reload caddy');
+}
+
+export async function restartWebhookServer(): Promise<void> {
+  await executeCommand('docker compose -f /opt/apps/webhook/docker-compose.yml restart');
+}
+
+export async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function createDirectory(dirPath: string): Promise<void> {
+  await fs.mkdir(dirPath, { recursive: true });
+}
+
+export async function writeFile(filePath: string, content: string): Promise<void> {
+  const dir = path.dirname(filePath);
+  await createDirectory(dir);
+  await fs.writeFile(filePath, content, 'utf-8');
+}
+
+export async function readFile(filePath: string): Promise<string> {
+  return fs.readFile(filePath, 'utf-8');
+}
+
+export async function readJSON<T>(filePath: string): Promise<T> {
+  const content = await readFile(filePath);
+  return JSON.parse(content);
+}
+
+export async function writeJSON<T>(filePath: string, data: T): Promise<void> {
+  const dir = path.dirname(filePath);
+  await createDirectory(dir);
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+export async function listDirectories(dirPath: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    return entries
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+export async function chmod(filePath: string, mode: number): Promise<void> {
+  await fs.chmod(filePath, mode);
+}
