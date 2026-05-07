@@ -55,9 +55,9 @@ export async function getTeams(): Promise<TeamInfo[]> {
     const dirs = await listDirectories(APPS_DIR);
     // Filter out system directories
     const teamDirs = dirs.filter(
-      dir => !['caddy', 'webhook', 'users.json'].includes(dir) && dir.startsWith('team-')
+      dir => !['caddy', 'webhook', 'users.json'].includes(dir)
     );
-    return teamDirs.map(name => ({ name: name.replace('team-', '') }));
+    return teamDirs.map(name => ({ name }));
   } catch (error) {
     console.error('Failed to get teams:', error);
     return [];
@@ -74,7 +74,7 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     }
 
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
 
     console.log(`Creating team: ${sanitizedTeamName} in ${teamDir}`);
 
@@ -182,7 +182,7 @@ export interface TeamConfig {
 export async function getTeamConfig(teamName: string): Promise<TeamConfig | null> {
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
 
     const envPath = path.join(teamDir, '.env');
     const envContent = await readFile(envPath);
@@ -195,7 +195,7 @@ export async function getTeamConfig(teamName: string): Promise<TeamConfig | null
     });
 
     const hooks = await readJSON<any[]>(HOOKS_JSON_PATH);
-    const teamHook = hooks.find(h => h.id.startsWith(`team-${sanitizedTeamName}-`));
+    const teamHook = hooks.find(h => h.id === sanitizedTeamName);
     const branch = teamHook?.['match-branch'] || 'main';
 
     return {
@@ -217,7 +217,7 @@ export async function updateTeamEnv(
 ): Promise<{ success: boolean; message: string }> {
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
 
     const envContent = Object.entries(envVariables)
       .map(([key, value]) => `${key}=${value}`)
@@ -242,7 +242,7 @@ export async function updateTeamEnv(
 export async function manualDeployTeam(teamName: string): Promise<{ success: boolean; message: string }> {
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
 
     await deployTeam(teamDir);
 
@@ -280,7 +280,7 @@ export async function updateTeamBranch(
 export async function updateTeamHostPort(teamName: string, hostPort: number): Promise<{ success: boolean; message: string }> {
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
     const configPath = path.join(teamDir, 'team.config.json');
     
     const config = await readJSON<TeamConfigFile>(configPath);
@@ -310,7 +310,7 @@ export async function updateTeamHostPort(teamName: string, hostPort: number): Pr
 export async function getTeamHostPort(teamName: string): Promise<{ success: boolean; hostPort?: number; domain?: string; message?: string }> {
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
     const configPath = path.join(teamDir, 'team.config.json');
     
     const config = await readJSON<TeamConfigFile>(configPath);
