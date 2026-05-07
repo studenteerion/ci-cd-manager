@@ -1,4 +1,7 @@
+import { readFile } from '@/lib/server';
+
 const USERS_FILE = '/opt/apps/users.json';
+const LOCAL_USERS_FILE = './server-deploy/users.json';
 
 export interface User {
   username: string;
@@ -7,11 +10,15 @@ export interface User {
 
 export async function loadUsers(): Promise<User[]> {
   try {
-    // In production, read from USERS_FILE
-    // For now, return hardcoded user for testing
-    return [
-      { username: 'admin', password: 'admin123' }
-    ];
+    // Try to read from production path first
+    try {
+      const content = await readFile(USERS_FILE);
+      return JSON.parse(content);
+    } catch {
+      // Fall back to local development file
+      const content = await readFile(LOCAL_USERS_FILE);
+      return JSON.parse(content);
+    }
   } catch (error) {
     console.error('Failed to load users:', error);
     return [];
