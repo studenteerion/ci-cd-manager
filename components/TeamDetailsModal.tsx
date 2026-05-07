@@ -174,12 +174,12 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
         <div className="p-6 space-y-6">
           {/* Status Messages */}
           {status && (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-800">
+            <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-900 font-medium">
               {status}
             </div>
           )}
           {error && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
+            <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-900 font-medium">
               {error}
             </div>
           )}
@@ -209,7 +209,7 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
                     value={newBranch}
                     onChange={(e) => setNewBranch(e.target.value)}
                     placeholder="Enter branch name (e.g., main, develop, production)"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
                   />
                   <button
                     onClick={handleUpdateBranch}
@@ -232,7 +232,7 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
                 <textarea
                   value={envText}
                   onChange={(e) => setEnvText(e.target.value)}
-                  className="w-full h-48 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
+                  className="w-full h-48 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm text-slate-900 placeholder-slate-500"
                   placeholder="API_KEY=value
 DATABASE_URL=value
 DEBUG=true"

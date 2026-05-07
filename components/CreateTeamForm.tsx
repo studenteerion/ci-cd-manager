@@ -102,63 +102,63 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
 
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-900 mb-1">
             Team Name *
           </label>
           <input
             type="text"
             value={teamName}
             onChange={(e) => setTeamName(e.target.value)}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
             placeholder="e.g., alpha, beta"
             disabled={loading}
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-900 mb-1">
             Repository URL (HTTPS) *
           </label>
           <input
             type="url"
             value={repositoryUrl}
             onChange={(e) => setRepositoryUrl(e.target.value)}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
             placeholder="https://github.com/org/repo.git"
             disabled={loading}
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-900 mb-1">
             Domain *
           </label>
           <input
             type="text"
             value={domain}
             onChange={(e) => setDomain(e.target.value)}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
             placeholder="alpha.example.com"
             disabled={loading}
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-900 mb-1">
             Git Branch
           </label>
           <input
             type="text"
             value={branch}
             onChange={(e) => setBranch(e.target.value)}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
             placeholder="main"
             disabled={loading}
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-3">
+          <label className="block text-sm font-medium text-slate-900 mb-3">
             Environment Variables
           </label>
           <div className="space-y-2">
@@ -170,7 +170,7 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
                   onChange={(e) =>
                     handleEnvVarChange(index, 'key', e.target.value)
                   }
-                  className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
                   placeholder="KEY"
                   disabled={loading}
                 />
@@ -180,7 +180,7 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
                   onChange={(e) =>
                     handleEnvVarChange(index, 'value', e.target.value)
                   }
-                  className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
                   placeholder="value"
                   disabled={loading}
                 />
@@ -208,13 +208,13 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
         </div>
 
         {error && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-900 text-sm font-medium">
             {error}
           </div>
         )}
 
         {success && (
-          <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+          <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-900 text-sm font-medium">
             {success}
           </div>
         )}
