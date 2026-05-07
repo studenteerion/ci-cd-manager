@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Plus, X } from 'lucide-react';
 
 interface EnvVariable {
   key: string;
@@ -98,7 +99,10 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-2xl font-bold text-slate-900 mb-6">Create New Team</h2>
+      <h2 className="text-2xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+        <Plus size={24} />
+        Create New Team
+      </h2>
 
       <div className="space-y-4">
         <div>
@@ -200,10 +204,11 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
           <button
             type="button"
             onClick={handleAddEnvVar}
-            className="mt-2 text-blue-600 hover:text-blue-700 text-sm font-medium"
+            className="mt-2 flex items-center gap-2 text-blue-600 hover:text-blue-700 text-sm font-medium"
             disabled={loading}
           >
-            + Add Variable
+            <Plus size={16} />
+            Add Variable
           </button>
         </div>
 

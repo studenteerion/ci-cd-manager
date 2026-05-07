@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { X, Cog, Code2, GitBranch, DownloadCloud } from 'lucide-react';
 import { TeamConfig } from '@/actions/teams';
 
 interface TeamDetailsModalProps {
@@ -159,14 +160,16 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-slate-900">
+          <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <Cog size={24} />
             Team: <code className="text-blue-600">{teamId}</code>
           </h2>
           <button
             onClick={onClose}
-            className="text-slate-500 hover:text-slate-700 text-2xl font-bold"
+            className="text-slate-500 hover:text-slate-700 transition"
+            title="Close"
           >
-            ✕
+            <X size={24} />
           </button>
         </div>
 
@@ -190,8 +193,9 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
             <>
               {/* Current Branch */}
               <div className="bg-slate-50 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-slate-900 mb-3">
-                  📦 Current Branch
+                <h3 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                  <GitBranch size={20} />
+                  Current Branch
                 </h3>
                 <p className="text-sm text-slate-600 mb-3">
                   Webhook is monitoring: <code className="bg-blue-100 px-2 py-1 rounded font-mono text-blue-900">{branch}</code>
@@ -200,8 +204,9 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
 
               {/* Branch Selection */}
               <div className="border border-slate-200 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-slate-900 mb-4">
-                  🔀 Change Branch
+                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                  <GitBranch size={20} />
+                  Change Branch
                 </h3>
                 <div className="space-y-3">
                   <input
@@ -223,8 +228,9 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
 
               {/* Environment Variables */}
               <div className="border border-slate-200 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-slate-900 mb-4">
-                  🔐 Environment Variables
+                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                  <Code2 size={20} />
+                  Environment Variables
                 </h3>
                 <p className="text-sm text-slate-600 mb-3">
                   Format: KEY=VALUE (one per line). Changes will trigger container restart.
@@ -242,14 +248,15 @@ DEBUG=true"
                   disabled={saving || deploying}
                   className="mt-3 w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
                 >
-                  {saving ? 'Saving...' : '💾 Save & Restart Containers'}
+                  {saving ? 'Saving...' : 'Save & Restart Containers'}
                 </button>
               </div>
 
               {/* Manual Deploy */}
               <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
-                <h3 className="text-lg font-semibold text-slate-900 mb-2">
-                  🚀 Manual Deploy
+                <h3 className="text-lg font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                  <DownloadCloud size={20} />
+                  Manual Deploy
                 </h3>
                 <p className="text-sm text-slate-600 mb-4">
                   Trigger the deploy script immediately without waiting for webhook.
@@ -257,9 +264,10 @@ DEBUG=true"
                 <button
                   onClick={handleDeploy}
                   disabled={deploying || saving}
-                  className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
                 >
-                  {deploying ? 'Deploying...' : '🚀 Deploy Now'}
+                  <DownloadCloud size={18} />
+                  {deploying ? 'Deploying...' : 'Deploy Now'}
                 </button>
               </div>
             </>
