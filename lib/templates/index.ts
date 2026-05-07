@@ -88,6 +88,17 @@ export function generateCaddyConfig(teamName: string, domain: string, port: numb
   return config;
 }
 
+export function generateDockerComposeOverride(hostPort: number): string {
+  const config = `# Override file - do NOT edit, auto-generated
+# This sets the host port from team.config.json
+services:
+  app:
+    ports:
+      - "${hostPort}:${hostPort}"
+`;
+  return config;
+}
+
 export function generateDeployScript(
   teamName: string,
   branchName: string = 'main'
@@ -100,8 +111,27 @@ set -euo pipefail
 
 APP_DIR="${teamDir}"
 LOG_FILE="${logFile}"
+CONFIG_FILE="\${APP_DIR}/team.config.json"
+OVERRIDE_FILE="\${APP_DIR}/docker-compose.override.yml"
 
 echo "[$(date -Iseconds)] === Deploy avviato ===" >> "$LOG_FILE"
+
+# Extract host port from team.config.json and create override file
+if [ -f "\$CONFIG_FILE" ]; then
+  HOST_PORT=$(grep -o '"hostPort":[0-9]*' "\$CONFIG_FILE" | grep -o '[0-9]*')
+  if [ ! -z "\$HOST_PORT" ]; then
+    echo "[$(date -Iseconds)] Using host port: \$HOST_PORT" >> "$LOG_FILE"
+    # Generate docker-compose.override.yml with the admin-specified port
+    cat > "\$OVERRIDE_FILE" << 'YAML'
+# Override file - do NOT edit, auto-generated
+# This sets the host port from team.config.json
+services:
+  app:
+    ports:
+      - "\$HOST_PORT:\$HOST_PORT"
+YAML
+  fi
+fi
 
 cd "$APP_DIR"
 git pull origin ${branchName} >> "$LOG_FILE" 2>&1

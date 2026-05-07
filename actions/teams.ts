@@ -22,6 +22,7 @@ import {
   generateDeployScript,
   generateWebhookHookEntry,
   extractPortFromDockerCompose,
+  generateDockerComposeOverride,
 } from '@/lib/templates';
 import * as path from 'path';
 
@@ -93,8 +94,8 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     const envPath = path.join(teamDir, '.env');
     await writeFile(envPath, envContent);
 
-    // Step 4: Save team configuration and generate Caddy config
-    console.log('Step 4: Creating team config and Caddy config...');
+    // Step 4: Save team configuration, create docker-compose override, and generate Caddy config
+    console.log('Step 4: Creating team config, docker-compose override, and Caddy config...');
     const teamConfig: TeamConfigFile = {
       hostPort,
       domain,
@@ -102,6 +103,11 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     };
     const teamConfigPath = path.join(teamDir, 'team.config.json');
     await writeJSON(teamConfigPath, teamConfig);
+
+    // Create docker-compose.override.yml with the admin-specified port
+    const overrideContent = generateDockerComposeOverride(hostPort);
+    const overridePath = path.join(teamDir, 'docker-compose.override.yml');
+    await writeFile(overridePath, overrideContent);
 
     const caddyConfig = generateCaddyConfig(sanitizedTeamName, domain, hostPort);
     const caddyPath = path.join(CADDY_CONF_DIR, `${sanitizedTeamName}.conf`);
@@ -279,6 +285,11 @@ export async function updateTeamHostPort(teamName: string, hostPort: number): Pr
     const config = await readJSON<TeamConfigFile>(configPath);
     config.hostPort = hostPort;
     await writeJSON(configPath, config);
+    
+    // Update docker-compose.override.yml with new port
+    const overrideContent = generateDockerComposeOverride(hostPort);
+    const overridePath = path.join(teamDir, 'docker-compose.override.yml');
+    await writeFile(overridePath, overrideContent);
     
     // Regenerate Caddy config with new port
     const caddyConfig = generateCaddyConfig(sanitizedTeamName, config.domain, hostPort);

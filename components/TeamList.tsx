@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Settings, Folder } from 'lucide-react';
+import { Settings, Folder, Zap } from 'lucide-react';
 import { TeamInfo } from '@/actions/teams';
 
 interface TeamListProps {
@@ -10,8 +10,12 @@ interface TeamListProps {
   onTeamSelect?: (teamId: string) => void;
 }
 
+interface TeamWithPort extends TeamInfo {
+  hostPort?: number;
+}
+
 export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect }: TeamListProps) {
-  const [teams, setTeams] = useState<TeamInfo[]>(initialTeams);
+  const [teams, setTeams] = useState<TeamWithPort[]>(initialTeams);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -21,7 +25,22 @@ export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect }: Team
         const response = await fetch('/api/teams');
         const data = await response.json();
         if (data.teams) {
-          setTeams(data.teams);
+          // Fetch port for each team
+          const teamsWithPorts = await Promise.all(
+            data.teams.map(async (team: TeamInfo) => {
+              try {
+                const portRes = await fetch(`/api/teams/${team.name}/port`);
+                const portData = await portRes.json();
+                return {
+                  ...team,
+                  hostPort: portData.hostPort,
+                };
+              } catch {
+                return team;
+              }
+            })
+          );
+          setTeams(teamsWithPorts);
         }
       } catch (error) {
         console.error('Failed to fetch teams:', error);
@@ -57,10 +76,16 @@ export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect }: Team
             <h3 className="text-lg font-semibold text-slate-900">{team.name}</h3>
             <Folder size={24} className="text-blue-500" />
           </div>
-          <div className="text-sm text-slate-600 mb-4 space-y-1">
+          <div className="text-sm text-slate-600 mb-4 space-y-2">
             <p className="font-mono text-xs bg-white px-2 py-1 rounded border border-slate-200">
               /opt/apps/team-{team.name}
             </p>
+            {team.hostPort && (
+              <p className="flex items-center gap-2 text-slate-700">
+                <Zap size={16} className="text-amber-500" />
+                <span className="font-mono">localhost:{team.hostPort}</span>
+              </p>
+            )}
           </div>
           <button
             onClick={() => onTeamSelect?.(team.name)}
