@@ -18,3 +18,9 @@ export function getLogsDirectory(): string {
 
 export const isDevelopment = process.env.NODE_ENV === 'development';
 export const isTesting = APP_MODE === 'testing';
+
+export function logTestingMode(message: string): void {
+  if (isTesting) {
+    console.log(`[TESTING MODE] ${message}`);
+  }
+}

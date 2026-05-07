@@ -2,10 +2,16 @@ import { exec, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
+import { isTesting, logTestingMode } from '../env';
 
 const execAsync = promisify(exec);
 
 export async function executeCommand(command: string): Promise<{ stdout: string; stderr: string }> {
+  if (isTesting) {
+    logTestingMode(`Would execute: ${command}`);
+    return { stdout: '', stderr: '' };
+  }
+  
   try {
     const { stdout, stderr } = await execAsync(command, {
       timeout: 60000,
@@ -18,20 +24,40 @@ export async function executeCommand(command: string): Promise<{ stdout: string;
 }
 
 export async function generateWebhookSecret(): Promise<string> {
+  if (isTesting) {
+    logTestingMode('Generating mock webhook secret');
+    return 'test-webhook-secret-' + Math.random().toString(36).substring(2, 15);
+  }
+  
   const { stdout } = await executeCommand('openssl rand -hex 32');
   return stdout.trim();
 }
 
 export async function gitClone(repoUrl: string, targetDir: string): Promise<void> {
+  if (isTesting) {
+    logTestingMode(`Would clone ${repoUrl} to ${targetDir}`);
+    return;
+  }
+  
   await executeCommand(`git clone "${repoUrl}" "${targetDir}"`);
 }
 
 export async function reloadCaddy(): Promise<void> {
+  if (isTesting) {
+    logTestingMode('Would reload Caddy');
+    return;
+  }
+  
   const cmd = process.env.CADDY_RELOAD_CMD || 'systemctl reload caddy';
   await executeCommand(cmd);
 }
 
 export async function restartWebhookServer(): Promise<void> {
+  if (isTesting) {
+    logTestingMode('Would restart webhook server');
+    return;
+  }
+  
   const cmd = process.env.WEBHOOK_RESTART_CMD || 'docker compose -f /opt/apps/webhook/docker-compose.yml restart';
   await executeCommand(cmd);
 }
@@ -87,10 +113,20 @@ export async function chmod(filePath: string, mode: number): Promise<void> {
 }
 
 export async function restartContainers(teamDir: string): Promise<void> {
+  if (isTesting) {
+    logTestingMode(`Would run docker compose up in ${teamDir}`);
+    return;
+  }
+  
   await executeCommand(`cd "${teamDir}" && docker compose up -d`);
 }
 
 export async function deployTeam(teamDir: string): Promise<void> {
+  if (isTesting) {
+    logTestingMode(`Would deploy team from ${teamDir}`);
+    return;
+  }
+  
   const deployScriptPath = `${teamDir}/deploy.sh`;
   if (!await fileExists(deployScriptPath)) {
     throw new Error(`Deploy script not found at ${deployScriptPath}`);
