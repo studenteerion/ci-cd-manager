@@ -1,23 +1,37 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutGrid, Plus, LogOut } from 'lucide-react';
+import { LayoutGrid, Plus, LogOut, User } from 'lucide-react';
 
 export function DashboardSidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [username, setUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Read username from cookie
+    const cookies = document.cookie.split(';');
+    const userCookie = cookies.find(c => c.trim().startsWith('username='));
+    if (userCookie) {
+      const user = userCookie.split('=')[1];
+      setUsername(decodeURIComponent(user));
+    }
+  }, []);
 
   const isActive = (path: string) => pathname === path;
 
   const handleLogout = () => {
     document.cookie =
       'session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+    document.cookie =
+      'username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
     router.push('/login');
   };
 
   return (
-    <div className="w-64 bg-slate-900 text-white min-h-screen fixed left-0 top-0 shadow-lg">
+    <div className="w-64 bg-slate-900 text-white min-h-screen fixed left-0 top-0 shadow-lg flex flex-col">
       {/* Logo */}
       <div className="p-6 border-b border-slate-700">
         <h1 className="text-xl font-bold flex items-center gap-2">
@@ -29,7 +43,7 @@ export function DashboardSidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="p-4 space-y-2">
+      <nav className="p-4 space-y-2 flex-1">
         <Link
           href="/dashboard/teams"
           className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
@@ -55,16 +69,27 @@ export function DashboardSidebar() {
         </Link>
       </nav>
 
-      {/* Spacer */}
-      <div className="flex-1" />
+      {/* Bottom Section */}
+      <div className="border-t border-slate-700 p-4 space-y-4">
+        {/* User Info */}
+        {username && (
+          <div className="px-4 py-3 bg-slate-800 rounded-lg flex items-center gap-3">
+            <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+              <User size={16} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs text-slate-400">Logged in as</p>
+              <p className="text-sm font-medium text-white truncate">{username}</p>
+            </div>
+          </div>
+        )}
 
-      {/* Logout Button */}
-      <div className="p-4 border-t border-slate-700">
+        {/* Logout Button */}
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 bg-red-600 hover:bg-red-700 rounded-lg transition text-white"
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 rounded-lg transition text-white font-medium"
         >
-          <LogOut size={20} />
+          <LogOut size={18} />
           <span>Logout</span>
         </button>
       </div>

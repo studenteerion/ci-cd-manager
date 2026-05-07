@@ -24,11 +24,20 @@ export async function POST(request: NextRequest) {
     const token = createSessionToken();
     const response = NextResponse.json({ success: true, message: 'Login successful' });
 
-    // Set secure session cookie
+    // Set secure session cookie with username
     response.cookies.set({
       name: 'session',
       value: token,
       httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60, // 24 hours
+    });
+
+    // Set non-httpOnly cookie with username for client-side access
+    response.cookies.set({
+      name: 'username',
+      value: username,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 24 * 60 * 60, // 24 hours
