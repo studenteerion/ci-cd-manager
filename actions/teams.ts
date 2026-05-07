@@ -21,6 +21,7 @@ import {
   generateCaddyConfig,
   generateDeployScript,
   generateWebhookHookEntry,
+  extractPortFromDockerCompose,
 } from '@/lib/templates';
 import * as path from 'path';
 
@@ -85,9 +86,10 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     const envPath = path.join(teamDir, '.env');
     await writeFile(envPath, envContent);
 
-    // Step 4: Generate and write Caddy config
+    // Step 4: Extract port from docker-compose and generate Caddy config
     console.log('Step 4: Creating Caddy config...');
-    const caddyConfig = generateCaddyConfig(sanitizedTeamName, domain);
+    const port = await extractPortFromDockerCompose(teamDir);
+    const caddyConfig = generateCaddyConfig(sanitizedTeamName, domain, port);
     const caddyPath = path.join(CADDY_CONF_DIR, `${sanitizedTeamName}.conf`);
     await writeFile(caddyPath, caddyConfig);
 

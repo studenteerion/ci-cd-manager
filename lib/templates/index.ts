@@ -1,5 +1,6 @@
 import { readFile } from '../server';
 import * as path from 'path';
+import * as YAML from 'js-yaml';
 
 // Path to the templates in server-deploy
 const TEMPLATES_BASE = path.join(process.cwd(), '..', 'server-deploy');
@@ -20,10 +21,58 @@ export async function loadHooksJsonTemplate(): Promise<any> {
   return JSON.parse(content);
 }
 
-export function generateCaddyConfig(teamName: string, domain: string): string {
-  const containerName = `${teamName}-container`;
+export async function extractPortFromDockerCompose(teamDir: string): Promise<number> {
+  try {
+    // Try docker-compose.yml first, then docker-compose.yaml
+    let composeContent: string | null = null;
+    const composeFiles = ['docker-compose.yml', 'docker-compose.yaml'];
+    
+    for (const file of composeFiles) {
+      const composePath = path.join(teamDir, file);
+      try {
+        composeContent = await readFile(composePath);
+        break;
+      } catch {
+        // Try next file
+      }
+    }
+
+    if (!composeContent) {
+      throw new Error('No docker-compose file found');
+    }
+
+    const compose = YAML.load(composeContent) as any;
+    
+    // Extract port from services
+    const services = compose.services || {};
+    for (const [serviceName, service] of Object.entries(services)) {
+      const ports = (service as any).ports || [];
+      for (const port of ports) {
+        if (typeof port === 'string') {
+          // Format: "8000:8000" or "3000:3000" -> extract first port
+          const mapped = port.split(':')[0];
+          if (mapped && !isNaN(parseInt(mapped))) {
+            return parseInt(mapped);
+          }
+        } else if (typeof port === 'object' && port !== null) {
+          // Format: { published: 8000, target: 8000 }
+          if ((port as any).published) {
+            return (port as any).published;
+          }
+        }
+      }
+    }
+
+    throw new Error('No port mapping found in docker-compose');
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to extract port from docker-compose: ${errorMsg}`);
+  }
+}
+
+export function generateCaddyConfig(teamName: string, domain: string, port: number): string {
   const config = `${domain} {
-    reverse_proxy ${containerName}:8000 {
+    reverse_proxy localhost:${port} {
         header_up Host {host}
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-For {remote_host}
