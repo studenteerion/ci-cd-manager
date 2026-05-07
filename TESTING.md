@@ -1,5 +1,65 @@
 # Testing Guide - Multi-Tenant Deployment Dashboard
 
+## Quick Start: Testing on Mac with Testing Mode
+
+### 1. Configure Testing Mode
+Testing mode is already enabled in `.env.local`:
+```bash
+cat .env.local
+# Output: APP_MODE=testing
+```
+
+### 2. Start Dev Server on Port 61555
+```bash
+npm run dev
+# Server runs on http://localhost:61555
+```
+
+### 3. Login
+- Username: `admin`
+- Password: `admin123`
+
+### 4. Test Team Creation
+All files are created in `temp/` directory (not `/opt/apps`):
+```bash
+# Create a team via the UI
+# Then verify files were created:
+ls -la temp/apps/
+# You'll see: caddy/, webhook/, team-*/
+
+# View a team's files:
+ls -la temp/apps/team-my-team/
+# Contains: .env, team.config.json, docker-compose.override.yml
+
+# Clean up after testing:
+rm -rf temp/
+```
+
+### 5. What Works in Testing Mode
+✅ Full GUI experience (create, view, edit teams)
+✅ Dashboard with sidebar and user info
+✅ All forms and buttons
+✅ Port management interface
+✅ Environment variable editing
+✅ Branch editing
+
+### 6. Limitations
+⚠️ Git clone won't actually clone (but team directory is created)
+⚠️ Docker compose and deployment won't run (no Docker on Mac)
+⚠️ Caddy reload and webhook restart won't work
+⚠️ Some errors are silently skipped (operations return success)
+
+### 7. Production Mode (Ubuntu Server)
+To test on a real Ubuntu server with `/opt/apps` directory:
+```bash
+# Edit .env.local
+APP_MODE=production
+
+# Then follow the instructions below ⬇️
+```
+
+---
+
 ## Pre-requisites for Testing
 
 Before testing on Ubuntu server, ensure:

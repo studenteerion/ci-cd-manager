@@ -24,9 +24,10 @@ import {
   extractPortFromDockerCompose,
   generateDockerComposeOverride,
 } from '@/lib/templates';
+import { getTeamsDirectory, getLogsDirectory, isTesting } from '@/lib/env';
 import * as path from 'path';
 
-const APPS_DIR = process.env.APPS_BASE_DIR || '/opt/apps';
+const APPS_DIR = process.env.APPS_BASE_DIR || getTeamsDirectory();
 const CADDY_CONF_DIR = process.env.CADDY_CONF_DIR || path.join(APPS_DIR, 'caddy', 'conf.d');
 const WEBHOOK_SCRIPTS_DIR = process.env.WEBHOOK_SCRIPTS_DIR || path.join(APPS_DIR, 'webhook', 'scripts');
 const HOOKS_JSON_PATH = process.env.WEBHOOK_HOOKS_FILE || path.join(APPS_DIR, 'webhook', 'hooks.json');
@@ -126,7 +127,9 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
 
     // Step 7: Create deploy script
     console.log('Step 7: Creating deploy script...');
-    const deployScript = generateDeployScript(sanitizedTeamName, branch);
+    const logsDir = getLogsDirectory();
+    const logFile = path.join(logsDir, `deploy-${sanitizedTeamName}.log`);
+    const deployScript = generateDeployScript(sanitizedTeamName, branch, teamDir, logFile);
     const scriptPath = path.join(WEBHOOK_SCRIPTS_DIR, `deploy-${sanitizedTeamName}.sh`);
     await writeFile(scriptPath, deployScript);
     await chmod(scriptPath, 0o755);

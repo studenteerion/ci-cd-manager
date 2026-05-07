@@ -101,11 +101,10 @@ services:
 
 export function generateDeployScript(
   teamName: string,
-  branchName: string = 'main'
+  branchName: string = 'main',
+  teamDir: string = `/opt/apps/team-${teamName}`,
+  logFile: string = `/var/log/deploy-${teamName}.log`
 ): string {
-  const teamDir = `/opt/apps/${teamName}`;
-  const logFile = `/var/log/deploy-${teamName}.log`;
-  
   const script = `#!/bin/bash
 set -euo pipefail
 

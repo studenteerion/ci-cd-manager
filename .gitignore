@@ -49,3 +49,6 @@ users.json
 # AI agent configuration files (ignored from git)
 AGENTS.md
 CLAUDE.md
+
+# Testing temp folder
+/temp
