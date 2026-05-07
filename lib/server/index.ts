@@ -27,11 +27,13 @@ export async function gitClone(repoUrl: string, targetDir: string): Promise<void
 }
 
 export async function reloadCaddy(): Promise<void> {
-  await executeCommand('systemctl reload caddy');
+  const cmd = process.env.CADDY_RELOAD_CMD || 'systemctl reload caddy';
+  await executeCommand(cmd);
 }
 
 export async function restartWebhookServer(): Promise<void> {
-  await executeCommand('docker compose -f /opt/apps/webhook/docker-compose.yml restart');
+  const cmd = process.env.WEBHOOK_RESTART_CMD || 'docker compose -f /opt/apps/webhook/docker-compose.yml restart';
+  await executeCommand(cmd);
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

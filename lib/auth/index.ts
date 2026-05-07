@@ -1,6 +1,6 @@
 import { readFile } from '@/lib/server';
 
-const USERS_FILE = '/opt/apps/users.json';
+const USERS_FILE = process.env.USERS_FILE || '/opt/apps/users.json';
 const LOCAL_USERS_FILE = './server-deploy/users.json';
 
 export interface User {
@@ -10,7 +10,7 @@ export interface User {
 
 export async function loadUsers(): Promise<User[]> {
   try {
-    // Try to read from production path first
+    // Try to read from configured path first
     try {
       const content = await readFile(USERS_FILE);
       return JSON.parse(content);

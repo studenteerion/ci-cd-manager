@@ -24,10 +24,10 @@ import {
 } from '@/lib/templates';
 import * as path from 'path';
 
-const APPS_DIR = '/opt/apps';
-const CADDY_CONF_DIR = path.join(APPS_DIR, 'caddy', 'conf.d');
-const WEBHOOK_SCRIPTS_DIR = path.join(APPS_DIR, 'webhook', 'scripts');
-const HOOKS_JSON_PATH = path.join(APPS_DIR, 'webhook', 'hooks.json');
+const APPS_DIR = process.env.APPS_BASE_DIR || '/opt/apps';
+const CADDY_CONF_DIR = process.env.CADDY_CONF_DIR || path.join(APPS_DIR, 'caddy', 'conf.d');
+const WEBHOOK_SCRIPTS_DIR = process.env.WEBHOOK_SCRIPTS_DIR || path.join(APPS_DIR, 'webhook', 'scripts');
+const HOOKS_JSON_PATH = process.env.WEBHOOK_HOOKS_FILE || path.join(APPS_DIR, 'webhook', 'hooks.json');
 
 export interface CreateTeamInput {
   teamName: string;
