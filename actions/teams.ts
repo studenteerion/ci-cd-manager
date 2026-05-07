@@ -34,8 +34,15 @@ export interface CreateTeamInput {
   teamName: string;
   repositoryUrl: string;
   domain: string;
+  hostPort: number;
   envVariables: Record<string, string>;
   branch?: string;
+}
+
+export interface TeamConfigFile {
+  hostPort: number;
+  domain: string;
+  createdAt: string;
 }
 
 export interface TeamInfo {
@@ -58,10 +65,10 @@ export async function getTeams(): Promise<TeamInfo[]> {
 
 export async function createTeam(input: CreateTeamInput): Promise<{ success: boolean; message: string }> {
   try {
-    const { teamName, repositoryUrl, domain, envVariables, branch = 'main' } = input;
+    const { teamName, repositoryUrl, domain, hostPort, envVariables, branch = 'main' } = input;
 
     // Validate inputs
-    if (!teamName || !repositoryUrl || !domain) {
+    if (!teamName || !repositoryUrl || !domain || !hostPort) {
       return { success: false, message: 'Missing required fields' };
     }
 
@@ -86,10 +93,17 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     const envPath = path.join(teamDir, '.env');
     await writeFile(envPath, envContent);
 
-    // Step 4: Extract port from docker-compose and generate Caddy config
-    console.log('Step 4: Creating Caddy config...');
-    const port = await extractPortFromDockerCompose(teamDir);
-    const caddyConfig = generateCaddyConfig(sanitizedTeamName, domain, port);
+    // Step 4: Save team configuration and generate Caddy config
+    console.log('Step 4: Creating team config and Caddy config...');
+    const teamConfig: TeamConfigFile = {
+      hostPort,
+      domain,
+      createdAt: new Date().toISOString(),
+    };
+    const teamConfigPath = path.join(teamDir, 'team.config.json');
+    await writeJSON(teamConfigPath, teamConfig);
+
+    const caddyConfig = generateCaddyConfig(sanitizedTeamName, domain, hostPort);
     const caddyPath = path.join(CADDY_CONF_DIR, `${sanitizedTeamName}.conf`);
     await writeFile(caddyPath, caddyConfig);
 
@@ -253,6 +267,44 @@ export async function updateTeamBranch(
   } catch (error) {
     console.error('Failed to update team branch:', error);
     const message = error instanceof Error ? error.message : 'Failed to update branch';
+    return { success: false, message };
+  }
+}
+export async function updateTeamHostPort(teamName: string, hostPort: number): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+    const configPath = path.join(teamDir, 'team.config.json');
+    
+    const config = await readJSON<TeamConfigFile>(configPath);
+    config.hostPort = hostPort;
+    await writeJSON(configPath, config);
+    
+    // Regenerate Caddy config with new port
+    const caddyConfig = generateCaddyConfig(sanitizedTeamName, config.domain, hostPort);
+    const caddyPath = path.join(CADDY_CONF_DIR, `${sanitizedTeamName}.conf`);
+    await writeFile(caddyPath, caddyConfig);
+    
+    // Reload Caddy
+    await reloadCaddy();
+    
+    return { success: true, message: `Host port updated to ${hostPort}` };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to update host port';
+    return { success: false, message };
+  }
+}
+
+export async function getTeamHostPort(teamName: string): Promise<{ success: boolean; hostPort?: number; domain?: string; message?: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, `team-${sanitizedTeamName}`);
+    const configPath = path.join(teamDir, 'team.config.json');
+    
+    const config = await readJSON<TeamConfigFile>(configPath);
+    return { success: true, hostPort: config.hostPort, domain: config.domain };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to read team host port';
     return { success: false, message };
   }
 }

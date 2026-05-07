@@ -4,12 +4,13 @@ import { createTeam, CreateTeamInput } from '@/actions/teams';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { teamName, repositoryUrl, domain, branch, envVariables } = body as CreateTeamInput;
+    const { teamName, repositoryUrl, domain, hostPort, branch, envVariables } = body as CreateTeamInput;
 
     const result = await createTeam({
       teamName,
       repositoryUrl,
       domain,
+      hostPort,
       envVariables,
       branch,
     });

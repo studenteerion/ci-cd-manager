@@ -16,6 +16,7 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
   const [teamName, setTeamName] = useState('');
   const [repositoryUrl, setRepositoryUrl] = useState('');
   const [domain, setDomain] = useState('');
+  const [hostPort, setHostPort] = useState('8000');
   const [branch, setBranch] = useState('main');
   const [envVariables, setEnvVariables] = useState<EnvVariable[]>([
     { key: '', value: '' },
@@ -49,7 +50,7 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
     setLoading(true);
 
     try {
-      if (!teamName || !repositoryUrl || !domain) {
+      if (!teamName || !repositoryUrl || !domain || !hostPort) {
         setError('Please fill in all required fields');
         return;
       }
@@ -69,6 +70,7 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
           teamName,
           repositoryUrl,
           domain,
+          hostPort: parseInt(hostPort),
           branch,
           envVariables: envObj,
         }),
@@ -81,6 +83,7 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
         setTeamName('');
         setRepositoryUrl('');
         setDomain('');
+        setHostPort('8000');
         setBranch('main');
         setEnvVariables([{ key: '', value: '' }]);
         
@@ -145,6 +148,23 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
             placeholder="alpha.example.com"
             disabled={loading}
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-900 mb-1">
+            Host Port (localhost) *
+          </label>
+          <input
+            type="number"
+            value={hostPort}
+            onChange={(e) => setHostPort(e.target.value)}
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
+            placeholder="8000"
+            min="1000"
+            max="65535"
+            disabled={loading}
+          />
+          <p className="text-xs text-slate-600 mt-1">Port for Caddy reverse proxy on localhost</p>
         </div>
 
         <div>
