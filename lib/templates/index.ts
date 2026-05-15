@@ -70,6 +70,55 @@ export async function extractPortFromDockerCompose(teamDir: string): Promise<num
   }
 }
 
+export async function detectComposeServiceName(teamDir: string): Promise<string> {
+  const composeFiles = ['docker-compose.yml', 'docker-compose.yaml'];
+  for (const file of composeFiles) {
+    const composePath = path.join(teamDir, file);
+    try {
+      const composeContent = await readFile(composePath);
+      const compose = YAML.load(composeContent) as any;
+      if (compose && compose.services && typeof compose.services === 'object') {
+        const firstService = Object.keys(compose.services)[0];
+        if (firstService) {
+          return firstService;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  return 'app';
+}
+
+export async function detectComposeTargetPort(teamDir: string): Promise<number> {
+  const composeFiles = ['docker-compose.yml', 'docker-compose.yaml'];
+  for (const file of composeFiles) {
+    const composePath = path.join(teamDir, file);
+    try {
+      const composeContent = await readFile(composePath);
+      const compose = YAML.load(composeContent) as any;
+      if (compose && compose.services && typeof compose.services === 'object') {
+        for (const service of Object.values(compose.services)) {
+          const ports = (service as any).ports || [];
+          for (const port of ports) {
+            if (typeof port === 'string') {
+              const parts = port.split(':');
+              if (parts.length === 2 && !isNaN(parseInt(parts[1], 10))) {
+                return parseInt(parts[1], 10);
+              }
+            } else if (typeof port === 'object' && port !== null && port.target) {
+              return parseInt(port.target, 10);
+            }
+          }
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  throw new Error('No target port found in docker-compose');
+}
+
 export function generateCaddyConfig(teamName: string, domain: string, port: number): string {
   const config = `${domain} {
     reverse_proxy localhost:${port} {
@@ -80,7 +129,7 @@ export function generateCaddyConfig(teamName: string, domain: string, port: numb
     }
 
     log {
-        output file /var/log/caddy/${teamName}.log
+        output file /opt/apps/caddy/logs/${teamName}.log
         format json
     }
 }
@@ -88,13 +137,13 @@ export function generateCaddyConfig(teamName: string, domain: string, port: numb
   return config;
 }
 
-export function generateDockerComposeOverride(hostPort: number): string {
+export function generateDockerComposeOverride(hostPort: number, serviceName: string, containerPort: number = hostPort): string {
   const config = `# Override file - do NOT edit, auto-generated
 # This sets the host port from team.config.json
 services:
-  app:
+  ${serviceName}:
     ports:
-      - "${hostPort}:${hostPort}"
+      - "${hostPort}:${containerPort}"
 `;
   return config;
 }
@@ -103,45 +152,103 @@ export function generateDeployScript(
   teamName: string,
   branchName: string = 'main',
   teamDir: string = `/opt/apps/team-${teamName}`,
-  logFile: string = `/var/log/deploy-${teamName}.log`
+  logFile: string = `/var/log/deploy-${teamName}.log`,
+  serviceName: string = 'app',
+  containerPort: number = 0
 ): string {
-  const script = `#!/bin/bash
-set -euo pipefail
-
-APP_DIR="${teamDir}"
-LOG_FILE="${logFile}"
-CONFIG_FILE="\${APP_DIR}/team.config.json"
-OVERRIDE_FILE="\${APP_DIR}/docker-compose.override.yml"
-
-echo "[$(date -Iseconds)] === Deploy avviato ===" >> "$LOG_FILE"
-
-# Extract host port from team.config.json and create override file
-if [ -f "\$CONFIG_FILE" ]; then
-  HOST_PORT=$(grep -o '"hostPort":[0-9]*' "\$CONFIG_FILE" | grep -o '[0-9]*')
-  if [ ! -z "\$HOST_PORT" ]; then
-    echo "[$(date -Iseconds)] Using host port: \$HOST_PORT" >> "$LOG_FILE"
-    # Generate docker-compose.override.yml with the admin-specified port
-    cat > "\$OVERRIDE_FILE" << 'YAML'
-# Override file - do NOT edit, auto-generated
-# This sets the host port from team.config.json
-services:
-  app:
-    ports:
-      - "\$HOST_PORT:\$HOST_PORT"
-YAML
-  fi
-fi
-
-cd "$APP_DIR"
-git pull origin ${branchName} >> "$LOG_FILE" 2>&1
-
-docker compose pull >> "$LOG_FILE" 2>&1 || true
-docker compose up --build -d --force-recreate >> "$LOG_FILE" 2>&1
-
-docker image prune -f >> "$LOG_FILE" 2>&1
-
-echo "[$(date -Iseconds)] === Deploy completato ===" >> "$LOG_FILE"
-`;
+  // Build script with proper shell variable syntax
+  const script = [
+    '#!/bin/sh',
+    'set -euo pipefail',
+    '',
+    `APP_DIR="${teamDir}"`,
+    `LOG_FILE="${logFile}"`,
+    'CONFIG_FILE="$APP_DIR/team.config.json"',
+    'OVERRIDE_FILE="$APP_DIR/docker-compose.override.yml"',
+    `SERVICE_NAME="${serviceName}"`,
+    `CONTAINER_PORT=${containerPort}`,
+    '',
+    'echo "[$(date -Iseconds)] === Deploy avviato ===" >> "$LOG_FILE"',
+    '',
+    '# Extract host port from team.config.json',
+    'HOST_PORT=$(grep -o \'"hostPort":[[:space:]]*[0-9]*\' "$CONFIG_FILE" | grep -o \'[0-9]*\' || true)',
+    'if [ -z "$HOST_PORT" ]; then HOST_PORT=0; fi',
+    'if [ "$CONTAINER_PORT" -le 0 ]; then',
+    '  echo "[$(date -Iseconds)] Container port not set; using 80 as default" >> "$LOG_FILE"',
+    '  CONTAINER_PORT=80',
+    'fi',
+    '',
+    '# Helper to check if a port is free',
+    'is_port_free() {',
+    '  local p=$1',
+    '  if command -v ss >/dev/null 2>&1; then',
+    '    ss -tln 2>/dev/null | awk \'NR>1 {print $4}\' | grep -q -E "[:.]$p$" && return 1 || return 0',
+    '  elif command -v netstat >/dev/null 2>&1; then',
+    '    netstat -tln 2>/dev/null | awk \'NR>2 {print $4}\' | grep -q -E "[:.]$p$" && return 1 || return 0',
+    '  else',
+    '    # fallback: try /dev/tcp (may not be available on all shells)',
+    '    (echo > /dev/tcp/127.0.0.1/$p) >/dev/null 2>&1 && return 1 || return 0',
+    '  fi',
+    '}',
+    '',
+    'SELECTED_PORT=""',
+    'if [ "$HOST_PORT" -gt 0 ] && is_port_free "$HOST_PORT"; then',
+    '  SELECTED_PORT="$HOST_PORT"',
+    'else',
+    '  START_PORT=$((HOST_PORT > 0 ? HOST_PORT + 1 : 8000))',
+    '  for p in $(seq "$START_PORT" 65535); do',
+    '    if is_port_free "$p"; then',
+    '      SELECTED_PORT="$p"',
+    '      break',
+    '    fi',
+    '  done',
+    '  if [ -z "$SELECTED_PORT" ]; then',
+    '    for p in $(seq 1000 $((START_PORT - 1))); do',
+    '      if is_port_free "$p"; then',
+    '        SELECTED_PORT="$p"',
+    '        break',
+    '      fi',
+    '    done',
+    '  fi',
+    'fi',
+    '',
+    'if [ -z "$SELECTED_PORT" ]; then',
+    '  echo "[$(date -Iseconds)] No available host port found" >> "$LOG_FILE"',
+    'else',
+    '  if [ "$SELECTED_PORT" != "$HOST_PORT" ]; then',
+    '    echo "[$(date -Iseconds)] Requested port $HOST_PORT unavailable; assigning $SELECTED_PORT" >> "$LOG_FILE"',
+    '    # Update team.config.json with the new hostPort (best-effort)',
+    '    if command -v node >/dev/null 2>&1; then',
+    '      node -e "const fs=require(\'fs\');const p=process.argv[1];const port=Number(process.argv[2]);try{const j=JSON.parse(fs.readFileSync(p,\'utf8\')||\'{}\');j.hostPort=port;fs.writeFileSync(p,JSON.stringify(j,null,2));}catch(e){process.exit(0);} " "$CONFIG_FILE" "$SELECTED_PORT" || true',
+    '    else',
+    '      # Fallback: sed in-place replacement (may not be perfect)',
+    '      sed -i -E \'s/("hostPort":[[:space:]]*)[0-9]+/\\1$SELECTED_PORT/g\' "$CONFIG_FILE" || true',
+    '    fi',
+    '  fi',
+    '',
+    '  # Generate docker-compose.override.yml with selected host port',
+    '  cat > "$OVERRIDE_FILE" <<YAML',
+    '# Override file - do NOT edit, auto-generated',
+    '# This sets the host port from team.config.json (or reassigned if original was busy)',
+    'services:',
+    `  ${serviceName}:`,
+    '    ports:',
+    '      - "$SELECTED_PORT:' + `${containerPort}` + '"',
+    'YAML',
+    '',
+    'fi',
+    '',
+    'cd "$APP_DIR"',
+    `git pull origin ${branchName} >> "$LOG_FILE" 2>&1`,
+    '',
+    'docker compose pull >> "$LOG_FILE" 2>&1 || true',
+    'docker compose up --build -d --force-recreate >> "$LOG_FILE" 2>&1',
+    '',
+    'docker image prune -f >> "$LOG_FILE" 2>&1',
+    '',
+    'echo "[$(date -Iseconds)] === Deploy completato ===" >> "$LOG_FILE"',
+  ].join('\n');
+  
   return script;
 }
 

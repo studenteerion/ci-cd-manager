@@ -1,0 +1,22 @@
+services:
+  webhook:
+    image: almir/webhook:latest
+    container_name: webhook-server
+    restart: always
+    command:
+      - "-verbose"
+      - "-hooks=/etc/webhook/hooks.json"
+      - "-hotreload"
+    volumes:
+      - ./hooks.json:/etc/webhook/hooks.json:ro
+      - ./scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/apps:/opt/apps
+    networks:
+      - caddy_net
+    env_file:
+      - .env
+
+networks:
+  caddy_net:
+    external: true

@@ -1,7 +1,15 @@
 import { readFile } from '@/lib/server';
+import { isTesting } from '@/lib/env';
 import * as path from 'path';
 
-const USERS_FILE = process.env.USERS_FILE || path.join(process.cwd(), 'users.json');
+const APPS_DIR = process.env.APPS_BASE_DIR || '/opt/apps';
+const configuredUsersFile = process.env.USERS_FILE;
+const usersBaseDir = isTesting ? process.cwd() : APPS_DIR;
+const USERS_FILE = configuredUsersFile
+  ? path.isAbsolute(configuredUsersFile)
+    ? configuredUsersFile
+    : path.resolve(usersBaseDir, configuredUsersFile)
+  : path.join(APPS_DIR, 'users.json');
 
 export interface User {
   username: string;

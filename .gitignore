@@ -2,7 +2,6 @@
 /node_modules
 /.pnp
 .pnp.js
-package-lock.json
 
 # Testing
 /coverage
@@ -27,7 +26,8 @@ yarn-error.log*
 
 # Local env files
 .env
-.env.example
+.env.*.local
+.env.local
 .env.production.local
 .env.development.local
 
@@ -39,16 +39,6 @@ users.json
 .vscode/
 *.swp
 *.swo
-
-# Documentation (ignored from git)
-/docs
-
-# Server deployment files (ignored from git)
-/server-deploy
-
-# AI agent configuration files (ignored from git)
-AGENTS.md
-CLAUDE.md
 
 # Testing temp folder
 /temp

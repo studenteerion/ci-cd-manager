@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Settings, Folder, Zap } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Settings, Folder, Zap, Circle } from 'lucide-react';
 import { TeamInfo } from '@/actions/teams';
 
 interface TeamListProps {
@@ -12,9 +13,12 @@ interface TeamListProps {
 
 interface TeamWithPort extends TeamInfo {
   hostPort?: number;
+  status?: string;
+  domain?: string;
 }
 
 export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect }: TeamListProps) {
+  const router = useRouter();
   const [teams, setTeams] = useState<TeamWithPort[]>(initialTeams);
   const [loading, setLoading] = useState(false);
 
@@ -25,15 +29,21 @@ export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect }: Team
         const response = await fetch('/api/teams');
         const data = await response.json();
         if (data.teams) {
-          // Fetch port for each team
+          // Fetch port and status for each team
           const teamsWithPorts = await Promise.all(
             data.teams.map(async (team: TeamInfo) => {
               try {
-                const portRes = await fetch(`/api/teams/${team.name}/port`);
+                const [portRes, statusRes] = await Promise.all([
+                  fetch(`/api/teams/${team.name}/port`),
+                  fetch(`/api/teams/${team.name}/status`),
+                ]);
                 const portData = await portRes.json();
+                const statusData = await statusRes.json();
                 return {
                   ...team,
                   hostPort: portData.hostPort,
+                  status: statusData.status,
+                  domain: portData.domain,
                 };
               } catch {
                 return team;
@@ -78,17 +88,47 @@ export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect }: Team
           </div>
           <div className="text-sm text-slate-600 mb-4 space-y-2">
             <p className="font-mono text-xs bg-white px-2 py-1 rounded border border-slate-200">
-              /opt/apps/team-{team.name}
+              /opt/apps/{team.name}
             </p>
+            {team.domain && (
+              <p className="flex items-center gap-2 text-slate-700">
+                <Zap size={16} className="text-amber-500" />
+                <a
+                  href={`https://${team.domain}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="font-mono text-blue-600 hover:underline"
+                >
+                  {team.domain}
+                </a>
+              </p>
+            )}
             {team.hostPort && (
               <p className="flex items-center gap-2 text-slate-700">
                 <Zap size={16} className="text-amber-500" />
                 <span className="font-mono">localhost:{team.hostPort}</span>
               </p>
             )}
+            {team.status && (
+              <p className="flex items-center gap-2 text-slate-700">
+                <Circle
+                  size={12}
+                  className={`fill-current ${
+                    team.status === 'running'
+                      ? 'text-green-500'
+                      : team.status === 'stopped' || team.status === 'exited'
+                      ? 'text-red-500'
+                      : team.status === 'restarting'
+                      ? 'text-yellow-500'
+                      : 'text-slate-400'
+                  }`}
+                />
+                <span className="text-sm capitalize">{team.status}</span>
+              </p>
+            )}
           </div>
           <button
-            onClick={() => onTeamSelect?.(team.name)}
+            onClick={() => router.push(`/dashboard/teams/${team.name}`)}
             className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-medium"
           >
             <Settings size={18} />

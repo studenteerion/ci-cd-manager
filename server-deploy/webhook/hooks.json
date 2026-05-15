@@ -1,0 +1,32 @@
+[
+  {
+    "id": "anh-here",
+    "execute-command": "/scripts/deploy-anh-here.sh",
+    "command-working-directory": "/opt/apps/anh-here",
+    "response-message": "Deploy anh-here avviato",
+    "trigger-rule": {
+      "and": [
+        {
+          "match": {
+            "type": "payload-hmac-sha256",
+            "secret": "REPLACE_WITH_WEBHOOK_SECRET_ANH_HERE",
+            "parameter": {
+              "source": "header",
+              "name": "X-Hub-Signature-256"
+            }
+          }
+        },
+        {
+          "match": {
+            "type": "value",
+            "value": "refs/heads/multitenancy",
+            "parameter": {
+              "source": "payload",
+              "name": "ref"
+            }
+          }
+        }
+      ]
+    }
+  }
+]

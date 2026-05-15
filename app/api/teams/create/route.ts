@@ -25,7 +25,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         message: result.message,
-        webhookSecret: result.message.split('secret: ')[1],
+        webhookSecret: result.webhookSecret || result.message.split('secret: ')[1],
+        hostPort: result.hostPort,
       });
     } else {
       return NextResponse.json(

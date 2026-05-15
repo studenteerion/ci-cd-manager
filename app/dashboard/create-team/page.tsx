@@ -1,15 +1,8 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { CreateTeamForm } from '@/components/CreateTeamForm';
 
 export default function CreateTeamPage() {
-  const router = useRouter();
-
-  const handleSuccess = () => {
-    router.push('/dashboard/teams');
-  };
-
   return (
     <>
       {/* Header */}
@@ -20,7 +13,7 @@ export default function CreateTeamPage() {
 
       {/* Form */}
       <div className="max-w-2xl">
-        <CreateTeamForm onSuccess={handleSuccess} />
+        <CreateTeamForm onSuccess={() => {}} />
       </div>
     </>
   );

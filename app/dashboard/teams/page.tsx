@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { RefreshCw, Webhook, Settings } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { RefreshCw, Webhook, Settings, FileText, X } from 'lucide-react';
 import { TeamList } from '@/components/TeamList';
 import { TeamDetailsModal } from '@/components/TeamDetailsModal';
 import { TeamInfo } from '@/actions/teams';
@@ -12,6 +12,11 @@ export default function TeamsPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [systemLoading, setSystemLoading] = useState(false);
   const [systemStatus, setSystemStatus] = useState('');
+  const [systemLogsOpen, setSystemLogsOpen] = useState<'caddy' | 'webhook' | null>(null);
+  const [systemLogsText, setSystemLogsText] = useState('');
+  const [systemLogsError, setSystemLogsError] = useState('');
+  const [systemLogsLoading, setSystemLogsLoading] = useState(false);
+  const systemLogsRef = useRef<HTMLDivElement | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -33,6 +38,12 @@ export default function TeamsPage() {
 
     fetchTeams();
   }, [refreshKey]);
+
+  useEffect(() => {
+    if (systemLogsOpen && systemLogsRef.current) {
+      systemLogsRef.current.scrollTop = systemLogsRef.current.scrollHeight;
+    }
+  }, [systemLogsOpen, systemLogsText]);
 
   const handleReloadCaddy = async () => {
     setSystemLoading(true);
@@ -59,6 +70,28 @@ export default function TeamsPage() {
       setSystemStatus('Failed to restart webhook');
     } finally {
       setSystemLoading(false);
+    }
+  };
+
+  const loadSystemLogs = async (type: 'caddy' | 'webhook') => {
+    setSystemLogsLoading(true);
+    setSystemLogsError('');
+    try {
+      const response = await fetch(`/api/system/${type}-logs?tail=200`);
+      const data = await response.json();
+      if (data.success) {
+        setSystemLogsText(data.logs || '');
+      } else {
+        setSystemLogsError(data.message || 'Failed to load logs');
+      }
+    } catch (error) {
+      setSystemLogsError('Failed to load logs');
+      console.error('Failed to load system logs:', error);
+    } finally {
+      setSystemLogsLoading(false);
+      if (systemLogsRef.current) {
+        systemLogsRef.current.scrollTop = systemLogsRef.current.scrollHeight;
+      }
     }
   };
 
@@ -103,9 +136,70 @@ export default function TeamsPage() {
             <Webhook size={18} />
             Restart Webhook
           </button>
+          <button
+            onClick={() => {
+              if (systemLogsOpen === 'caddy') {
+                setSystemLogsOpen(null);
+                return;
+              }
+              setSystemLogsOpen('caddy');
+              loadSystemLogs('caddy');
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium"
+          >
+            <FileText size={18} />
+            Visualizza log Caddy
+          </button>
+          <button
+            onClick={() => {
+              if (systemLogsOpen === 'webhook') {
+                setSystemLogsOpen(null);
+                return;
+              }
+              setSystemLogsOpen('webhook');
+              loadSystemLogs('webhook');
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium"
+          >
+            <FileText size={18} />
+            Visualizza log Webhook
+          </button>
         </div>
         {systemStatus && (
           <p className="mt-4 text-sm text-slate-600">{systemStatus}</p>
+        )}
+        {systemLogsOpen && (
+          <div className="mt-6 border border-slate-200 rounded-lg bg-slate-900 text-slate-100 max-w-full w-full overflow-x-hidden">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700">
+              <span className="text-sm font-medium capitalize">
+                {systemLogsOpen} logs
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => loadSystemLogs(systemLogsOpen)}
+                  disabled={systemLogsLoading}
+                  className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition"
+                >
+                  Refresh
+                </button>
+                <button
+                  onClick={() => setSystemLogsOpen(null)}
+                  className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+            {systemLogsError && (
+              <div className="px-4 py-2 text-xs text-red-300">{systemLogsError}</div>
+            )}
+            <div
+              ref={systemLogsRef}
+              className="px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all max-h-64 overflow-auto min-w-0"
+            >
+              {systemLogsLoading ? 'Loading logs...' : systemLogsText || 'No logs available.'}
+            </div>
+          </div>
         )}
       </div>
 

@@ -4,15 +4,17 @@ import { verifyCredentials, createSessionToken } from '@/lib/auth';
 export async function POST(request: NextRequest) {
   try {
     const { username, password } = await request.json();
+    const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+    const normalizedPassword = typeof password === 'string' ? password : '';
 
-    if (!username || !password) {
+    if (!normalizedUsername || !normalizedPassword) {
       return NextResponse.json(
         { success: false, message: 'Username and password are required' },
         { status: 400 }
       );
     }
 
-    const isValid = await verifyCredentials(username, password);
+    const isValid = await verifyCredentials(normalizedUsername, normalizedPassword);
 
     if (!isValid) {
       return NextResponse.json(
@@ -37,7 +39,7 @@ export async function POST(request: NextRequest) {
     // Set non-httpOnly cookie with username for client-side access
     response.cookies.set({
       name: 'username',
-      value: username,
+      value: normalizedUsername,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 24 * 60 * 60, // 24 hours

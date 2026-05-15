@@ -35,7 +35,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePortUpdate(
   request: NextRequest,
   { params: paramPromise }: { params: Promise<{ id: string }> }
 ) {
@@ -71,4 +71,12 @@ export async function PATCH(
       { status: 500 }
     );
   }
+}
+
+export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return handlePortUpdate(request, ctx);
+}
+
+export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return handlePortUpdate(request, ctx);
 }

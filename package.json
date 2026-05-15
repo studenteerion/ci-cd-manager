@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p $(node scripts/get-port.js)",
     "build": "next build",
-    "start": "next start"
+    "start": "next start -p $(node scripts/get-port.js)"
   },
   "dependencies": {
     "js-yaml": "^4.1.1",

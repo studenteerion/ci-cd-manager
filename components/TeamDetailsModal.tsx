@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, Cog, Code2, GitBranch, DownloadCloud } from 'lucide-react';
 import { TeamConfig } from '@/actions/teams';
 
@@ -21,6 +21,8 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
   const [envText, setEnvText] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [envUploadOpen, setEnvUploadOpen] = useState(false);
+  const [envDragActive, setEnvDragActive] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -93,6 +95,80 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
     } finally {
       setSaving(false);
     }
+  };
+
+  // File upload handling for .env files - client-side only
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const parseEnvContent = (text: string) => {
+    const result: Record<string, string> = {};
+    text.split(/\r?\n/).forEach((raw) => {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) return;
+      const idx = line.indexOf('=');
+      if (idx === -1) return;
+      const key = line.slice(0, idx).trim();
+      const valuePart = line.slice(idx + 1).trim();
+      const hashIdx = valuePart.indexOf('#');
+      const value = (hashIdx >= 0 ? valuePart.slice(0, hashIdx) : valuePart).trim();
+      if (key) result[key] = value;
+    });
+    return result;
+  };
+
+  const mergeEnvTextWithObject = (currentText: string, parsed: Record<string, string>) => {
+    const lines = currentText.split(/\r?\n/).filter(Boolean);
+    const map: Record<string, string> = {};
+    const order: string[] = [];
+
+    lines.forEach((ln) => {
+      const idx = ln.indexOf('=');
+      if (idx === -1) return;
+      const k = ln.slice(0, idx).trim();
+      const v = ln.slice(idx + 1).trim();
+      if (k && !order.includes(k)) order.push(k);
+      if (k) map[k] = v;
+    });
+
+    Object.entries(parsed).forEach(([k, v]) => {
+      if (!order.includes(k)) order.push(k);
+      map[k] = v; // overwrite or add
+    });
+
+    return order.map((k) => `${k}=${map[k]}`).join('\n');
+  };
+
+  const handleFileInputClick = () => fileInputRef.current?.click();
+
+  const processEnvFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || '');
+      const parsed = parseEnvContent(text);
+      if (Object.keys(parsed).length === 0) {
+        setError('Uploaded file contained no environment variables');
+        return;
+      }
+      const mergedText = mergeEnvTextWithObject(envText, parsed);
+      setEnvText(mergedText);
+      setStatus(`Imported ${Object.keys(parsed).length} variables (merged into editor)`);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setEnvUploadOpen(false);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleEnvFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processEnvFile(file);
+  };
+
+  const handleEnvDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setEnvDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processEnvFile(file);
   };
 
   const handleDeploy = async () => {
@@ -228,13 +304,84 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
 
               {/* Environment Variables */}
               <div className="border border-slate-200 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                  <Code2 size={20} />
-                  Environment Variables
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <Code2 size={20} />
+                    Environment Variables
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onChange={handleEnvFileUpload}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEnvUploadOpen(true)}
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded text-sm text-slate-700 flex items-center gap-2"
+                      title="Upload .env file (will merge into editor, not saved to server)"
+                    >
+                      <DownloadCloud size={16} />
+                      Upload .env
+                    </button>
+                  </div>
+                </div>
                 <p className="text-sm text-slate-600 mb-3">
                   Format: KEY=VALUE (one per line). Changes will trigger container restart.
                 </p>
+                <p className="text-xs text-slate-500 mb-3">
+                  Tip: se il file <code>.env</code> non appare, abilita la visualizzazione dei file nascosti (Ctrl+H).
+                </p>
+                {envUploadOpen && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                    <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+                      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                        <h4 className="text-lg font-semibold text-slate-900">Upload .env</h4>
+                        <button
+                          type="button"
+                          onClick={() => setEnvUploadOpen(false)}
+                          className="text-slate-600 hover:text-slate-900"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <div className="p-4">
+                        <div
+                          className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition ${
+                            envDragActive ? 'border-blue-500 bg-blue-50' : 'border-slate-300'
+                          }`}
+                          onDragEnter={(e) => {
+                            e.preventDefault();
+                            setEnvDragActive(true);
+                          }}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            setEnvDragActive(true);
+                          }}
+                          onDragLeave={(e) => {
+                            e.preventDefault();
+                            setEnvDragActive(false);
+                          }}
+                          onDrop={handleEnvDrop}
+                        >
+                          <DownloadCloud size={28} className="text-slate-500" />
+                          <p className="mt-3 text-sm text-slate-700">
+                            Trascina qui il file <code>.env</code> oppure
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleFileInputClick}
+                            className="mt-3 rounded bg-slate-100 px-3 py-2 text-sm text-slate-700 hover:bg-slate-200"
+                          >
+                            Sfoglia file
+                          </button>
+                          <p className="mt-2 text-xs text-slate-500">I file non vengono salvati sul server.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <textarea
                   value={envText}
                   onChange={(e) => setEnvText(e.target.value)}
