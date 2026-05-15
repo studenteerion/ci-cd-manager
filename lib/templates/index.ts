@@ -158,8 +158,8 @@ export function generateDeployScript(
 ): string {
   // Build script with proper shell variable syntax
   const script = [
-    '#!/bin/sh',
-    'set -euo pipefail',
+  '#!/bin/sh',
+  'set -eu',
     '',
     `APP_DIR="${teamDir}"`,
     `LOG_FILE="${logFile}"`,

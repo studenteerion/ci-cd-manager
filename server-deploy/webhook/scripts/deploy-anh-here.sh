@@ -1,5 +1,5 @@
 #!/bin/sh
-set -euo pipefail
+set -eu
 
 APP_DIR="/opt/apps/anh-here"
 LOG_FILE="/opt/apps/webhook/logs/deploy-anh-here.log"
