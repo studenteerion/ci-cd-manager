@@ -148,7 +148,7 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     // Step 7: Create deploy script
     console.log('Step 7: Creating deploy script...');
     await createDirectory(WEBHOOK_SCRIPTS_DIR);
-    const logFile = path.join('/var/log', `deploy-${sanitizedTeamName}.log`);
+  const logFile = path.join(APPS_DIR, 'webhook', 'logs', `deploy-${sanitizedTeamName}.log`);
     const deployScript = generateDeployScript(sanitizedTeamName, branch, teamDir, logFile, serviceName, containerPort);
     const scriptPath = path.join(WEBHOOK_SCRIPTS_DIR, `deploy-${sanitizedTeamName}.sh`);
     await writeFile(scriptPath, deployScript);

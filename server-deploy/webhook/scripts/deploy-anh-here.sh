@@ -1,8 +1,8 @@
-#!/bin/bash
+#!/bin/sh
 set -euo pipefail
 
 APP_DIR="/opt/apps/anh-here"
-LOG_FILE="/var/log/deploy-anh-here.log"
+LOG_FILE="/opt/apps/webhook/logs/deploy-anh-here.log"
 
 echo "[$(date -Iseconds)] === Deploy avviato ===" >> "$LOG_FILE"
 

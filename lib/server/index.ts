@@ -289,14 +289,14 @@ export async function deployTeam(teamDir: string, teamName?: string): Promise<vo
 
   const deployScriptPath = `${teamDir}/deploy.sh`;
   if (await fileExists(deployScriptPath)) {
-    await executeCommand(`bash "${deployScriptPath}"`);
+    await executeCommand(`sh "${deployScriptPath}"`);
     return;
   }
 
   if (teamName) {
     const webhookDeployPath = path.join('/opt/apps/webhook/scripts', `deploy-${teamName}.sh`);
     if (await fileExists(webhookDeployPath)) {
-      await executeCommand(`bash "${webhookDeployPath}"`);
+      await executeCommand(`sh "${webhookDeployPath}"`);
       return;
     }
   }
