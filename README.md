@@ -229,7 +229,3 @@ For production use:
 - [ ] Multi-user support with role-based access
 - [ ] Audit logging dashboard
 - [ ] Team resource monitoring
-
-## License
-
-MIT
