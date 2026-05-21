@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTeamConfig, updateTeamEnv } from '@/actions/teams';
+import {
+  EnvEntry,
+  parseEnvContent,
+  recordToEnvEntries,
+  validateEnvEntries,
+} from '@/lib/env-file';
 import { requireAuth } from '@/lib/auth/middleware';
 
 export async function GET(
@@ -26,6 +32,9 @@ export async function GET(
       success: true,
       env: config.env,
       domain: config.domain,
+      envEntries: config.envEntries,
+      envParseErrors: config.envParseErrors,
+      envParseWarnings: config.envParseWarnings,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to get team config';
@@ -47,29 +56,42 @@ export async function POST(
 
   const { id } = await params;
   try {
-    const { envContent } = await request.json();
+    const body = await request.json();
+    const envEntriesPayload = body?.envEntries as EnvEntry[] | undefined;
+    const envContent = body?.envContent as string | undefined;
+    const envRecord = body?.env as Record<string, string> | undefined;
 
-    if (!envContent || typeof envContent !== 'string') {
+    let envEntries: EnvEntry[] = [];
+
+    if (Array.isArray(envEntriesPayload)) {
+      envEntries = envEntriesPayload;
+    } else if (typeof envContent === 'string') {
+      const parsed = parseEnvContent(envContent);
+      if (parsed.errors.length > 0) {
+        return NextResponse.json(
+          { success: false, message: `Malformed .env: ${parsed.errors.join(' | ')}` },
+          { status: 400 }
+        );
+      }
+      envEntries = parsed.entries;
+    } else if (envRecord && typeof envRecord === 'object') {
+      envEntries = recordToEnvEntries(envRecord);
+    } else {
       return NextResponse.json(
-        { success: false, message: 'Invalid env content' },
+        { success: false, message: 'Invalid env payload' },
         { status: 400 }
       );
     }
 
-    // Parse envContent string into object
-    const env: Record<string, string> = {};
-    const lines = envContent.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...valueParts] = trimmed.split('=');
-        if (key) {
-          env[key.trim()] = valueParts.join('=').trim();
-        }
-      }
+    const validation = validateEnvEntries(envEntries);
+    if (validation.errors.length > 0) {
+      return NextResponse.json(
+        { success: false, message: `Invalid environment variables: ${validation.errors.join(' | ')}` },
+        { status: 400 }
+      );
     }
 
-    const result = await updateTeamEnv(id, env);
+    const result = await updateTeamEnv(id, validation.entries);
 
     return NextResponse.json(result);
   } catch (error) {
@@ -92,16 +114,29 @@ export async function PATCH(
 
   const { id } = await params;
   try {
-    const { env } = await request.json();
+    const body = await request.json();
+    const envEntries = Array.isArray(body?.envEntries)
+      ? (body.envEntries as EnvEntry[])
+      : body?.env && typeof body.env === 'object'
+        ? recordToEnvEntries(body.env as Record<string, string>)
+        : [];
 
-    if (!env || typeof env !== 'object') {
+    if (envEntries.length === 0) {
       return NextResponse.json(
         { success: false, message: 'Invalid env variables' },
         { status: 400 }
       );
     }
 
-    const result = await updateTeamEnv(id, env);
+    const validation = validateEnvEntries(envEntries);
+    if (validation.errors.length > 0) {
+      return NextResponse.json(
+        { success: false, message: `Invalid environment variables: ${validation.errors.join(' | ')}` },
+        { status: 400 }
+      );
+    }
+
+    const result = await updateTeamEnv(id, validation.entries);
 
     return NextResponse.json(result);
   } catch (error) {

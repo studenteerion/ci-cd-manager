@@ -17,6 +17,7 @@ import {
   updateWebhookBranch,
   findAvailableHostPort,
   executeCommand,
+  resolveGitBranch,
 } from '@/lib/server';
 import {
   generateCaddyConfig,
@@ -29,6 +30,14 @@ import {
 } from '@/lib/templates';
 import * as path from 'path';
 import { fileExists } from '@/lib/server';
+import {
+  EnvEntry,
+  entriesToRecord,
+  parseEnvContent,
+  recordToEnvEntries,
+  serializeEnvEntries,
+  validateEnvEntries,
+} from '@/lib/env-file';
 
 const APPS_DIR = process.env.APPS_BASE_DIR || '/opt/apps';
 const CADDY_CONF_DIR = process.env.CADDY_CONF_DIR || path.join(APPS_DIR, 'caddy', 'conf.d');
@@ -39,8 +48,9 @@ export interface CreateTeamInput {
   teamName: string;
   repositoryUrl: string;
   domain: string;
-  hostPort: number;
-  envVariables: Record<string, string>;
+  hostPort?: number;
+  envVariables?: Record<string, string>;
+  envEntries?: EnvEntry[];
   branch?: string;
 }
 
@@ -54,6 +64,13 @@ export interface TeamConfigFile {
 
 export interface TeamInfo {
   name: string;
+}
+
+const MIN_RANDOM_PORT = 10000;
+const MAX_RANDOM_PORT = 60000;
+
+function generateRandomHostPort(): number {
+  return Math.floor(Math.random() * (MAX_RANDOM_PORT - MIN_RANDOM_PORT + 1)) + MIN_RANDOM_PORT;
 }
 
 export async function getTeams(): Promise<TeamInfo[]> {
@@ -72,20 +89,34 @@ export async function getTeams(): Promise<TeamInfo[]> {
 
 export async function createTeam(input: CreateTeamInput): Promise<{ success: boolean; message: string; hostPort?: number; webhookSecret?: string }> {
   try {
-    const { teamName, repositoryUrl, domain, hostPort, envVariables, branch = 'main' } = input;
+    const { teamName, repositoryUrl, domain, hostPort, envVariables, envEntries, branch } = input;
 
     // Validate inputs
-    if (!teamName || !repositoryUrl || !domain || !hostPort) {
+    if (!teamName || !repositoryUrl || !domain) {
       return { success: false, message: 'Missing required fields' };
     }
 
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const teamDir = path.join(APPS_DIR, sanitizedTeamName);
 
+    const normalizedEntries = envEntries && envEntries.length > 0
+      ? envEntries
+      : recordToEnvEntries(envVariables || {});
+    const envValidation = validateEnvEntries(normalizedEntries);
+    if (envValidation.errors.length > 0) {
+      return {
+        success: false,
+        message: `Invalid environment variables: ${envValidation.errors.join(' | ')}`,
+      };
+    }
+
     console.log(`Creating team: ${sanitizedTeamName} in ${teamDir}`);
 
-    const assignedPort = await findAvailableHostPort(hostPort, APPS_DIR);
-    const portMessage = assignedPort !== hostPort ? ` Requested port ${hostPort} was unavailable and assigned ${assignedPort}.` : '';
+    const requestedPort = hostPort && hostPort > 0 ? hostPort : generateRandomHostPort();
+    const assignedPort = await findAvailableHostPort(requestedPort, APPS_DIR);
+    const portMessage = hostPort && assignedPort !== hostPort
+      ? ` Requested port ${hostPort} was unavailable and assigned ${assignedPort}.`
+      : '';
 
     // Step 1: Create team directory
     console.log('Step 1: Creating directory...');
@@ -93,13 +124,11 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
 
     // Step 2: Git clone
     console.log('Step 2: Cloning repository...');
-    await gitClone(repositoryUrl, teamDir);
+  const { branch: resolvedBranch } = await gitClone(repositoryUrl, teamDir, { branch });
 
     // Step 3: Create .env file
     console.log('Step 3: Creating .env file...');
-    const envContent = Object.entries(envVariables)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('\n');
+    const envContent = serializeEnvEntries(envValidation.entries);
     const envPath = path.join(teamDir, '.env');
     await writeFile(envPath, envContent);
 
@@ -109,7 +138,7 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
       hostPort: assignedPort,
       domain,
       createdAt: new Date().toISOString(),
-      branch,
+      branch: resolvedBranch,
       repositoryUrl,
     };
     const teamConfigPath = path.join(teamDir, 'team.config.json');
@@ -137,7 +166,7 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     const webhookDir = path.dirname(HOOKS_JSON_PATH);
     await createDirectory(webhookDir);
     const hooks = await readJSON<any[]>(HOOKS_JSON_PATH, []);
-    const newHook = generateWebhookHookEntry(sanitizedTeamName, webhookSecret, branch);
+  const newHook = generateWebhookHookEntry(sanitizedTeamName, webhookSecret, resolvedBranch);
     const existingHookIndex = hooks.findIndex(hook => hook.id === sanitizedTeamName);
     if (existingHookIndex !== -1) {
       hooks.splice(existingHookIndex, 1);
@@ -149,7 +178,7 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     console.log('Step 7: Creating deploy script...');
     await createDirectory(WEBHOOK_SCRIPTS_DIR);
   const logFile = path.join(APPS_DIR, 'webhook', 'logs', `deploy-${sanitizedTeamName}.log`);
-    const deployScript = generateDeployScript(sanitizedTeamName, branch, teamDir, logFile, serviceName, containerPort);
+  const deployScript = generateDeployScript(sanitizedTeamName, resolvedBranch, teamDir, logFile, serviceName, containerPort);
     const scriptPath = path.join(WEBHOOK_SCRIPTS_DIR, `deploy-${sanitizedTeamName}.sh`);
     await writeFile(scriptPath, deployScript);
     await chmod(scriptPath, 0o755);
@@ -168,7 +197,7 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
 
     return {
       success: true,
-      message: `Team '${sanitizedTeamName}' created successfully on port ${assignedPort}.${portMessage} Webhook secret: ${webhookSecret}`,
+      message: `Team '${sanitizedTeamName}' created successfully.${portMessage} Webhook secret: ${webhookSecret}`,
       hostPort: assignedPort,
       webhookSecret,
     };
@@ -205,6 +234,9 @@ export interface TeamConfig {
   repository: string;
   branch: string;
   env: Record<string, string>;
+  envEntries?: EnvEntry[];
+  envParseErrors?: string[];
+  envParseWarnings?: string[];
 }
 
 async function inferDomainFromCaddy(teamName: string): Promise<string> {
@@ -364,24 +396,8 @@ export async function getTeamConfig(teamName: string): Promise<TeamConfig | null
       envContent = await readFile(envPath);
     }
 
-    const env: Record<string, string> = {};
-    envContent.split('\n').forEach(line => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) {
-        return;
-      }
-
-      const separatorIndex = trimmed.indexOf('=');
-      if (separatorIndex === -1) {
-        return;
-      }
-
-      const key = trimmed.slice(0, separatorIndex).trim();
-      const value = trimmed.slice(separatorIndex + 1).trim();
-      if (key) {
-        env[key] = value;
-      }
-    });
+    const parsed = parseEnvContent(envContent);
+    const env = entriesToRecord(parsed.entries);
 
     const hooks = await readJSON<any[]>(HOOKS_JSON_PATH);
     const teamHook = hooks.find(h => h.id === sanitizedTeamName);
@@ -393,6 +409,9 @@ export async function getTeamConfig(teamName: string): Promise<TeamConfig | null
       repository: teamConfig.repositoryUrl || 'unknown',
       branch,
       env,
+      envEntries: parsed.entries,
+      envParseErrors: parsed.errors,
+      envParseWarnings: parsed.warnings,
     };
   } catch (error) {
     console.error('Failed to get team config:', error);
@@ -402,15 +421,21 @@ export async function getTeamConfig(teamName: string): Promise<TeamConfig | null
 
 export async function updateTeamEnv(
   teamName: string,
-  envVariables: Record<string, string>
+  envEntries: EnvEntry[]
 ): Promise<{ success: boolean; message: string }> {
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const teamDir = path.join(APPS_DIR, sanitizedTeamName);
 
-    const envContent = Object.entries(envVariables)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('\n');
+    const validation = validateEnvEntries(envEntries);
+    if (validation.errors.length > 0) {
+      return {
+        success: false,
+        message: `Invalid environment variables: ${validation.errors.join(' | ')}`,
+      };
+    }
+
+    const envContent = serializeEnvEntries(validation.entries);
     
     const envPath = path.join(teamDir, '.env');
     await writeFile(envPath, envContent);
@@ -452,13 +477,60 @@ export async function updateTeamBranch(
 ): Promise<{ success: boolean; message: string }> {
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    if (!newBranch || !newBranch.trim()) {
+      return { success: false, message: 'Branch name cannot be empty.' };
+    }
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+    const configPath = path.join(teamDir, 'team.config.json');
+    const config = await readJSON<TeamConfigFile>(configPath);
+    let repositoryUrl = config.repositoryUrl || '';
+    if (!repositoryUrl) {
+      try {
+        const { stdout } = await executeCommand(`cd "${teamDir}" && git remote get-url origin`);
+        repositoryUrl = stdout.trim();
+      } catch {
+        repositoryUrl = '';
+      }
+    }
+    if (!repositoryUrl) {
+      return {
+        success: false,
+        message: `Repository URL not found for team '${sanitizedTeamName}'.`,
+      };
+    }
 
-    await updateWebhookBranch(HOOKS_JSON_PATH, sanitizedTeamName, newBranch);
+    const resolved = await resolveGitBranch(repositoryUrl, newBranch);
+
+    await updateWebhookBranch(HOOKS_JSON_PATH, sanitizedTeamName, resolved.branch);
+
+    config.branch = resolved.branch;
+    if (!config.repositoryUrl) {
+      config.repositoryUrl = repositoryUrl;
+    }
+    await writeJSON(configPath, config);
+
+    try {
+      await executeCommand(`cd "${teamDir}" && git fetch origin "${resolved.branch}"`);
+      await executeCommand(
+        `cd "${teamDir}" && git checkout -B "${resolved.branch}" "origin/${resolved.branch}"`
+      );
+    } catch (error) {
+      console.warn('Failed to checkout branch locally:', error);
+    }
+
+    const serviceName = await detectComposeServiceName(teamDir).catch(() => 'app');
+    const containerPort = await detectComposeTargetPort(teamDir).catch(() => 0);
+    const logFile = path.join(APPS_DIR, 'webhook', 'logs', `deploy-${sanitizedTeamName}.log`);
+    const deployScript = generateDeployScript(sanitizedTeamName, resolved.branch, teamDir, logFile, serviceName, containerPort);
+    const scriptPath = path.join(WEBHOOK_SCRIPTS_DIR, `deploy-${sanitizedTeamName}.sh`);
+    await writeFile(scriptPath, deployScript);
+    await chmod(scriptPath, 0o755);
+
     await restartWebhookServer();
 
     return {
       success: true,
-      message: `Branch updated to '${newBranch}' for team '${sanitizedTeamName}'. Webhook restarted.`,
+      message: `Branch updated to '${resolved.branch}' for team '${sanitizedTeamName}'. Webhook restarted.`,
     };
   } catch (error) {
     console.error('Failed to update team branch:', error);

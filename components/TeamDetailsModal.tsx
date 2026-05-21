@@ -3,6 +3,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Cog, Code2, GitBranch, DownloadCloud } from 'lucide-react';
 import { TeamConfig } from '@/actions/teams';
+import {
+  EnvEntry,
+  mergeEnvEntries,
+  parseEnvContent,
+  serializeEnvEntries,
+  validateEnvEntries,
+} from '@/lib/env-file';
 
 interface TeamDetailsModalProps {
   teamId: string;
@@ -39,10 +46,18 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
       const data = await response.json();
 
       if (data.success) {
-        const envStr = Object.entries(data.env)
-          .map(([key, value]) => `${key}=${value}`)
-          .join('\n');
+        const entries: EnvEntry[] = Array.isArray(data.envEntries)
+          ? data.envEntries
+          : Object.entries(data.env || {}).map(([key, value], index) => ({
+              key,
+              value: String(value),
+              line: index + 1,
+            }));
+        const envStr = serializeEnvEntries(entries);
         setEnvText(envStr);
+        if (data.envParseErrors?.length) {
+          setError(`Env parse errors: ${data.envParseErrors.join(' | ')}`);
+        }
       } else {
         setError(data.message || 'Failed to load config');
       }
@@ -67,18 +82,21 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
     setStatus('');
     setError('');
     try {
-      const env: Record<string, string> = {};
-      envText.split('\n').forEach(line => {
-        const [key, value] = line.split('=');
-        if (key && value) {
-          env[key.trim()] = value.trim();
-        }
-      });
+      const parsed = parseEnvContent(envText);
+      if (parsed.errors.length > 0) {
+        setError(`Malformed .env: ${parsed.errors.join(' | ')}`);
+        return;
+      }
+      const validation = validateEnvEntries(parsed.entries);
+      if (validation.errors.length > 0) {
+        setError(`Invalid environment variables: ${validation.errors.join(' | ')}`);
+        return;
+      }
 
       const response = await fetch(`/api/teams/${teamId}/env`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ env }),
+        body: JSON.stringify({ envEntries: validation.entries }),
       });
 
       const data = await response.json();
@@ -86,6 +104,7 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
       if (data.success) {
         setStatus('✅ Environment variables updated and containers restarted');
         onRefresh();
+        await loadTeamConfig();
       } else {
         setError(data.message || 'Failed to save environment variables');
       }
@@ -100,42 +119,10 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
   // File upload handling for .env files - client-side only
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const parseEnvContent = (text: string) => {
-    const result: Record<string, string> = {};
-    text.split(/\r?\n/).forEach((raw) => {
-      const line = raw.trim();
-      if (!line || line.startsWith('#')) return;
-      const idx = line.indexOf('=');
-      if (idx === -1) return;
-      const key = line.slice(0, idx).trim();
-      const valuePart = line.slice(idx + 1).trim();
-      const hashIdx = valuePart.indexOf('#');
-      const value = (hashIdx >= 0 ? valuePart.slice(0, hashIdx) : valuePart).trim();
-      if (key) result[key] = value;
-    });
-    return result;
-  };
-
-  const mergeEnvTextWithObject = (currentText: string, parsed: Record<string, string>) => {
-    const lines = currentText.split(/\r?\n/).filter(Boolean);
-    const map: Record<string, string> = {};
-    const order: string[] = [];
-
-    lines.forEach((ln) => {
-      const idx = ln.indexOf('=');
-      if (idx === -1) return;
-      const k = ln.slice(0, idx).trim();
-      const v = ln.slice(idx + 1).trim();
-      if (k && !order.includes(k)) order.push(k);
-      if (k) map[k] = v;
-    });
-
-    Object.entries(parsed).forEach(([k, v]) => {
-      if (!order.includes(k)) order.push(k);
-      map[k] = v; // overwrite or add
-    });
-
-    return order.map((k) => `${k}=${map[k]}`).join('\n');
+  const mergeEnvTextWithEntries = (currentText: string, incoming: EnvEntry[]) => {
+    const currentParsed = parseEnvContent(currentText);
+    const merged = mergeEnvEntries(currentParsed.entries, incoming);
+    return serializeEnvEntries(merged);
   };
 
   const handleFileInputClick = () => fileInputRef.current?.click();
@@ -145,13 +132,17 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
     reader.onload = () => {
       const text = String(reader.result || '');
       const parsed = parseEnvContent(text);
-      if (Object.keys(parsed).length === 0) {
+      if (parsed.errors.length > 0) {
+        setError(`Malformed .env: ${parsed.errors.join(' | ')}`);
+        return;
+      }
+      if (parsed.entries.length === 0) {
         setError('Uploaded file contained no environment variables');
         return;
       }
-      const mergedText = mergeEnvTextWithObject(envText, parsed);
+      const mergedText = mergeEnvTextWithEntries(envText, parsed.entries);
       setEnvText(mergedText);
-      setStatus(`Imported ${Object.keys(parsed).length} variables (merged into editor)`);
+      setStatus(`Imported ${parsed.entries.length} variables (merged into editor)`);
       if (fileInputRef.current) fileInputRef.current.value = '';
       setEnvUploadOpen(false);
     };

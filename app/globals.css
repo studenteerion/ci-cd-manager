@@ -1,8 +1,66 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9;
+  --surface-elevated: #ffffff;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-muted: #475569;
+  --text-subtle: #64748b;
+  --placeholder: #94a3b8;
+  --sidebar-bg: #0f172a;
+  --sidebar-text: #f8fafc;
+  --sidebar-muted: #cbd5e1;
+  --input-bg: #ffffff;
+  --input-text: #0f172a;
+  --focus-ring: #2563eb;
+  color-scheme: light;
+}
+
+:root[data-theme='light'] {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9;
+  --surface-elevated: #ffffff;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-muted: #475569;
+  --text-subtle: #64748b;
+  --placeholder: #94a3b8;
+  --sidebar-bg: #0f172a;
+  --sidebar-text: #f8fafc;
+  --sidebar-muted: #cbd5e1;
+  --input-bg: #ffffff;
+  --input-text: #0f172a;
+  --focus-ring: #2563eb;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+  --surface: #0f172a;
+  --surface-muted: #111827;
+  --surface-elevated: #0f172a;
+  --border: #1f2937;
+  --border-strong: #334155;
+  --text-primary: #e2e8f0;
+  --text-muted: #cbd5e1;
+  --text-subtle: #94a3b8;
+  --placeholder: #94a3b8;
+  --sidebar-bg: #020617;
+  --sidebar-text: #e2e8f0;
+  --sidebar-muted: #94a3b8;
+  --input-bg: #0b1220;
+  --input-text: #e2e8f0;
+  --focus-ring: #60a5fa;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -14,15 +72,152 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #0b1220;
+    --foreground: #e2e8f0;
+    --surface: #0f172a;
+    --surface-muted: #111827;
+    --surface-elevated: #0f172a;
+    --border: #1f2937;
+    --border-strong: #334155;
+    --text-primary: #e2e8f0;
+    --text-muted: #cbd5e1;
+    --text-subtle: #94a3b8;
+    --placeholder: #94a3b8;
+    --sidebar-bg: #020617;
+    --sidebar-text: #e2e8f0;
+    --sidebar-muted: #94a3b8;
+    --input-bg: #0b1220;
+    --input-text: #e2e8f0;
+    --focus-ring: #60a5fa;
   }
+}
+
+:root[data-theme='dark'] .bg-white {
+  background-color: #0f172a;
+}
+
+:root[data-theme='dark'] .bg-slate-50 {
+  background-color: #111827;
+}
+
+:root[data-theme='dark'] .bg-slate-100 {
+  background-color: #1f2937;
+}
+
+:root[data-theme='dark'] .bg-slate-800 {
+  background-color: #0b1220;
+}
+
+:root[data-theme='dark'] .bg-slate-900 {
+  background-color: #020617;
+}
+
+:root[data-theme='dark'] .text-slate-900 {
+  color: #e2e8f0;
+}
+
+:root[data-theme='dark'] .text-slate-700 {
+  color: #cbd5f5;
+}
+
+:root[data-theme='dark'] .text-slate-600 {
+  color: #cbd5f5;
+}
+
+:root[data-theme='dark'] .text-slate-500 {
+  color: #94a3b8;
+}
+
+:root[data-theme='dark'] .text-slate-400 {
+  color: #94a3b8;
+}
+
+:root[data-theme='dark'] .border-slate-200 {
+  border-color: #1f2937;
+}
+
+:root[data-theme='dark'] .border-slate-300 {
+  border-color: #334155;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.bg-white {
+  background-color: var(--surface);
+}
+
+.bg-slate-50 {
+  background-color: var(--surface-muted);
+}
+
+.bg-slate-100 {
+  background-color: var(--surface-muted);
+}
+
+.bg-slate-800,
+.bg-slate-900 {
+  background-color: var(--sidebar-bg);
+}
+
+.text-slate-900 {
+  color: var(--text-primary);
+}
+
+.text-slate-700,
+.text-slate-600 {
+  color: var(--text-muted);
+}
+
+.text-slate-500,
+.text-slate-400 {
+  color: var(--text-subtle);
+}
+
+.text-slate-300 {
+  color: var(--sidebar-muted);
+}
+
+.text-slate-200,
+.text-slate-100 {
+  color: var(--sidebar-text);
+}
+
+.border-slate-200 {
+  border-color: var(--border);
+}
+
+.border-slate-300 {
+  border-color: var(--border-strong);
+}
+
+.border-slate-700 {
+  border-color: var(--border-strong);
+}
+
+.hover\:bg-slate-700:hover {
+  background-color: var(--surface-muted);
+}
+
+.placeholder-slate-500::placeholder,
+.placeholder-slate-400::placeholder {
+  color: var(--placeholder);
+}
+
+input,
+textarea,
+select {
+  background-color: var(--input-bg);
+  color: var(--input-text);
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  opacity: 0.7;
 }
 
 @keyframes slide-in {

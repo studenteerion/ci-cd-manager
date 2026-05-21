@@ -42,22 +42,46 @@ export async function extractPortFromDockerCompose(teamDir: string): Promise<num
     }
 
     const compose = YAML.load(composeContent) as any;
+
+    const parsePortValue = (value: string): number | null => {
+      const normalized = value.split('/')[0].trim();
+      const parsed = parseInt(normalized, 10);
+      return Number.isNaN(parsed) ? null : parsed;
+    };
     
     // Extract port from services
     const services = compose.services || {};
     for (const [serviceName, service] of Object.entries(services)) {
       const ports = (service as any).ports || [];
       for (const port of ports) {
+        if (typeof port === 'number') {
+          return port;
+        }
         if (typeof port === 'string') {
-          // Format: "8000:8000" or "3000:3000" -> extract first port
-          const mapped = port.split(':')[0];
-          if (mapped && !isNaN(parseInt(mapped))) {
-            return parseInt(mapped);
+          // Format: "8000:8000", "3000", "3000/tcp", "127.0.0.1:8000:8000"
+          const parts = port.split(':').map(part => part.trim()).filter(Boolean);
+          if (parts.length >= 3) {
+            const hostCandidate = parsePortValue(parts[1]);
+            if (hostCandidate !== null) {
+              return hostCandidate;
+            }
+          }
+          if (parts.length >= 2) {
+            const hostCandidate = parsePortValue(parts[0]);
+            if (hostCandidate !== null) {
+              return hostCandidate;
+            }
+          }
+          if (parts.length === 1) {
+            const hostCandidate = parsePortValue(parts[0]);
+            if (hostCandidate !== null) {
+              return hostCandidate;
+            }
           }
         } else if (typeof port === 'object' && port !== null) {
           // Format: { published: 8000, target: 8000 }
           if ((port as any).published) {
-            return (port as any).published;
+            return parseInt((port as any).published, 10);
           }
         }
       }
@@ -100,14 +124,43 @@ export async function detectComposeTargetPort(teamDir: string): Promise<number> 
       if (compose && compose.services && typeof compose.services === 'object') {
         for (const service of Object.values(compose.services)) {
           const ports = (service as any).ports || [];
+          const parsePortValue = (value: string): number | null => {
+            const normalized = value.split('/')[0].trim();
+            const parsed = parseInt(normalized, 10);
+            return Number.isNaN(parsed) ? null : parsed;
+          };
+
           for (const port of ports) {
+            if (typeof port === 'number') {
+              return port;
+            }
             if (typeof port === 'string') {
-              const parts = port.split(':');
-              if (parts.length === 2 && !isNaN(parseInt(parts[1], 10))) {
-                return parseInt(parts[1], 10);
+              const parts = port.split(':').map(part => part.trim()).filter(Boolean);
+              if (parts.length >= 3) {
+                const containerCandidate = parsePortValue(parts[2]);
+                if (containerCandidate !== null) {
+                  return containerCandidate;
+                }
               }
-            } else if (typeof port === 'object' && port !== null && port.target) {
-              return parseInt(port.target, 10);
+              if (parts.length >= 2) {
+                const containerCandidate = parsePortValue(parts[1]);
+                if (containerCandidate !== null) {
+                  return containerCandidate;
+                }
+              }
+              if (parts.length >= 1) {
+                const containerCandidate = parsePortValue(parts[0]);
+                if (containerCandidate !== null) {
+                  return containerCandidate;
+                }
+              }
+            } else if (typeof port === 'object' && port !== null) {
+              if ((port as any).target) {
+                return parseInt((port as any).target, 10);
+              }
+              if ((port as any).published) {
+                return parseInt((port as any).published, 10);
+              }
             }
           }
         }
@@ -143,7 +196,7 @@ export function generateDockerComposeOverride(hostPort: number, serviceName: str
 services:
   ${serviceName}:
     ports:
-      - "${hostPort}:${containerPort}"
+      - "127.0.0.1:${hostPort}:${containerPort}"
 `;
   return config;
 }
@@ -233,16 +286,62 @@ export function generateDeployScript(
     'services:',
     `  ${serviceName}:`,
     '    ports:',
-    '      - "$SELECTED_PORT:' + `${containerPort}` + '"',
+  '      - "127.0.0.1:$SELECTED_PORT:' + `${containerPort}` + '"',
     'YAML',
     '',
     'fi',
     '',
-    'cd "$APP_DIR"',
-    `git pull origin ${branchName} >> "$LOG_FILE" 2>&1`,
+  'cd "$APP_DIR"',
+  `git fetch origin ${branchName} >> "$LOG_FILE" 2>&1`,
+  `git checkout -B ${branchName} origin/${branchName} >> "$LOG_FILE" 2>&1`,
+  `git pull origin ${branchName} >> "$LOG_FILE" 2>&1`,
+    '',
+    'RUNTIME_COMPOSE_FILE="$APP_DIR/docker-compose.runtime.yml"',
+    'if [ -f "$APP_DIR/docker-compose.yml" ]; then',
+    "  python3 - \"$APP_DIR\" \"$SERVICE_NAME\" <<'PY'",
+    'import os, sys',
+    'base_dir, svc = sys.argv[1], sys.argv[2]',
+    'input_path = os.path.join(base_dir, "docker-compose.yml")',
+    'output_path = os.path.join(base_dir, "docker-compose.runtime.yml")',
+    'with open(input_path, "r") as f:',
+    '    lines = f.readlines()',
+    'out = []',
+    'in_service = False',
+    'skip_block = False',
+    'service_indent = "  "',
+    'for line in lines:',
+    '    if not in_service:',
+    '        if line.startswith("services:"):',
+    '            out.append(line)',
+    '            continue',
+    '        if line.startswith(f"{service_indent}{svc}:"):',
+    '            in_service = True',
+    '            out.append(line)',
+    '            continue',
+    '        out.append(line)',
+    '    else:',
+    '        if skip_block:',
+    '            if line.startswith(service_indent + "  ") and not line.startswith(service_indent + "    "):',
+    '                skip_block = False',
+    '            else:',
+    '                continue',
+    '        if line.startswith(service_indent + "  ports:"):',
+    '            skip_block = True',
+    '            continue',
+    '        if line.startswith(service_indent) and not line.startswith(service_indent + "  "):',
+    '            in_service = False',
+    '            out.append(line)',
+    '            continue',
+    '        out.append(line)',
+    'with open(output_path, "w") as f:',
+    '    f.writelines(out)',
+    'PY',
+    'else',
+    '  RUNTIME_COMPOSE_FILE="$APP_DIR/docker-compose.yml"',
+    'fi',
     '',
     'docker compose pull >> "$LOG_FILE" 2>&1 || true',
-    'docker compose up --build -d --force-recreate >> "$LOG_FILE" 2>&1',
+    'docker compose -f "$RUNTIME_COMPOSE_FILE" -f "$OVERRIDE_FILE" up --build -d --force-recreate >> "$LOG_FILE" 2>&1',
     '',
     'docker image prune -f >> "$LOG_FILE" 2>&1',
     '',

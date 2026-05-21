@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p $(node scripts/get-port.js)",
     "build": "next build",
-    "start": "next start -p $(node scripts/get-port.js)"
+  "start": "node scripts/start-or-build.js"
   },
   "dependencies": {
     "js-yaml": "^4.1.1",

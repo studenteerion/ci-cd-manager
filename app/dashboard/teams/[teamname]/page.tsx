@@ -2,11 +2,16 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
-import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Zap, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw } from 'lucide-react';
+import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw } from 'lucide-react';
 import { useToast } from '@/lib/context/ToastContext';
+import {
+  EnvEntry,
+  mergeEnvEntries,
+  parseEnvContent,
+  validateEnvEntries,
+} from '@/lib/env-file';
 
 interface TeamConfig {
-  hostPort?: number;
   domain?: string;
   env?: Record<string, string>;
   branch?: string;
@@ -32,7 +37,6 @@ export default function TeamDetailsPage() {
   const [containerName, setContainerName] = useState<string>('');
   const [branch, setBranch] = useState('main');
   const [newBranch, setNewBranch] = useState('');
-  const [newPort, setNewPort] = useState<number | ''>('');
   const [webhookSecret, setWebhookSecret] = useState<string>('');
   const [showWebhookSecret, setShowWebhookSecret] = useState(false);
   const [regeneratingSecret, setRegeneratingSecret] = useState(false);
@@ -78,45 +82,14 @@ export default function TeamDetailsPage() {
     setEnvVariables(updated);
   };
 
-  const parseEnvContent = (text: string) => {
-    const result: Record<string, string> = {};
-    text.split(/\r?\n/).forEach((raw) => {
-      const line = raw.trim();
-      if (!line || line.startsWith('#')) return;
-      const idx = line.indexOf('=');
-      if (idx === -1) return;
-      const key = line.slice(0, idx).trim();
-      const valuePart = line.slice(idx + 1).trim();
-      const hashIdx = valuePart.indexOf('#');
-      const value = (hashIdx >= 0 ? valuePart.slice(0, hashIdx) : valuePart).trim();
-      if (key) result[key] = value;
-    });
-    return result;
-  };
-
-  const mergeEnvArrayWithObject = (
-    current: EnvVariable[],
-    parsed: Record<string, string>
-  ) => {
-    const order: string[] = [];
-    const map = new Map<string, string>();
-
-    current.forEach(({ key, value }) => {
-      if (key) {
-        if (!order.includes(key)) order.push(key);
-        map.set(key, value);
-      }
-    });
-
-    Object.entries(parsed).forEach(([k, v]) => {
-      if (!order.includes(k)) order.push(k);
-      map.set(k, v);
-    });
-
-    const merged = order.map((k) => ({ key: k, value: map.get(k) || '' }));
-    if (merged.length === 0) merged.push({ key: '', value: '' });
-    return merged;
-  };
+  const toEnvEntries = (vars: EnvVariable[]): EnvEntry[] =>
+    vars
+      .filter((env) => env.key.trim() || env.value.trim())
+      .map((env, index) => ({
+        key: env.key.trim(),
+        value: env.value ?? '',
+        line: index + 1,
+      }));
 
   const handleEnvUploadClick = () => envFileInputRef.current?.click();
 
@@ -127,19 +100,24 @@ export default function TeamDetailsPage() {
     reader.onload = () => {
       const text = String(reader.result || '');
       const parsed = parseEnvContent(text);
-      if (Object.keys(parsed).length === 0) {
+      if (parsed.errors.length > 0) {
+        addToast(`Malformed .env: ${parsed.errors.join(' | ')}`, 'error');
+        return;
+      }
+      if (parsed.entries.length === 0) {
         addToast('Uploaded file contained no environment variables', 'error');
         return;
       }
       const existingKeys = new Set(envVariables.map((v) => v.key).filter(Boolean));
-      const merged = mergeEnvArrayWithObject(envVariables, parsed);
+      const mergedEntries = mergeEnvEntries(toEnvEntries(envVariables), parsed.entries);
+      const merged = mergedEntries.map((entry) => ({ key: entry.key, value: entry.value }));
       let added = 0;
       let updated = 0;
-      Object.keys(parsed).forEach((k) => {
-        if (existingKeys.has(k)) updated++; else added++;
+      parsed.entries.forEach((entry) => {
+        if (existingKeys.has(entry.key)) updated += 1; else added += 1;
       });
-      setEnvVariables(merged);
-      addToast(`Imported ${Object.keys(parsed).length} variables (${updated} updated, ${added} added)`, 'success');
+      setEnvVariables(merged.length > 0 ? merged : [{ key: '', value: '' }]);
+      addToast(`Imported ${parsed.entries.length} variables (${updated} updated, ${added} added)`, 'success');
       if (envFileInputRef.current) envFileInputRef.current.value = '';
       setEnvUploadOpen(false);
     };
@@ -161,39 +139,40 @@ export default function TeamDetailsPage() {
     setStatus('');
     setError('');
     try {
-      const [envRes, branchRes, portRes, statusRes, webhookRes] = await Promise.all([
+      const [envRes, branchRes, statusRes, webhookRes] = await Promise.all([
         fetch(`/api/teams/${teamName}/env`),
         fetch(`/api/teams/${teamName}/branch`),
-        fetch(`/api/teams/${teamName}/port`),
         fetch(`/api/teams/${teamName}/status`),
         fetch(`/api/teams/${teamName}/webhook-secret`),
       ]);
 
       const envData = await envRes.json();
       const branchData = await branchRes.json();
-      const portData = await portRes.json();
       const statusData = await statusRes.json();
       const webhookData = await webhookRes.json();
 
       if (envData.success) {
-        const envVars = Object.entries(envData.env).map(([key, value]) => ({
-          key,
-          value: String(value),
-        }));
+        const entries = Array.isArray(envData.envEntries)
+          ? (envData.envEntries as EnvEntry[])
+          : Object.entries(envData.env || {}).map(([key, value], index) => ({
+              key,
+              value: String(value),
+              line: index + 1,
+            }));
+        const envVars = entries.map((entry) => ({ key: entry.key, value: entry.value }));
         if (envVars.length === 0) {
           envVars.push({ key: '', value: '' });
         }
         setEnvVariables(envVars);
+        if (envData.envParseErrors?.length) {
+          setError(`Env parse errors: ${envData.envParseErrors.join(' | ')}`);
+        }
       } else {
         setError(envData.message || 'Failed to load config');
       }
 
       if (branchData.success) {
         setBranch(branchData.branch || 'main');
-      }
-
-      if (portData.hostPort) {
-        setNewPort(portData.hostPort);
       }
 
       if (statusData.status) {
@@ -209,7 +188,6 @@ export default function TeamDetailsPage() {
       }
 
       setConfig({
-        hostPort: portData.hostPort,
         domain: envData.domain,
         branch: branchData.branch || 'main',
         containerStatus: statusData.status,
@@ -247,26 +225,26 @@ export default function TeamDetailsPage() {
   const handleSaveEnv = async () => {
     setSaving(true);
     try {
-      const envObj = envVariables.reduce(
-        (acc, { key, value }) => {
-          if (key) acc[key] = value;
-          return acc;
-        },
-        {} as Record<string, string>
-      );
-
-      const envContent = Object.entries(envObj)
-        .map(([key, value]) => `${key}=${value}`)
-        .join('\n');
+      if (envVariables.some((env) => !env.key.trim() && env.value.trim())) {
+        addToast('Environment variable keys cannot be empty when a value is provided', 'error');
+        return;
+      }
+      const envEntries = toEnvEntries(envVariables);
+      const validation = validateEnvEntries(envEntries);
+      if (validation.errors.length > 0) {
+        addToast(`Invalid environment variables: ${validation.errors.join(' | ')}`, 'error');
+        return;
+      }
 
       const response = await fetch(`/api/teams/${teamName}/env`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ envContent }),
+        body: JSON.stringify({ envEntries: validation.entries }),
       });
       const data = await response.json();
       if (data.success) {
         addToast('Environment variables saved successfully', 'success');
+        await loadTeamConfig();
       } else {
         addToast(data.message || 'Failed to save env', 'error');
       }
@@ -287,7 +265,7 @@ export default function TeamDetailsPage() {
     setSaving(true);
     try {
       const response = await fetch(`/api/teams/${teamName}/branch`, {
-        method: 'POST',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ branch: newBranch }),
       });
@@ -307,32 +285,6 @@ export default function TeamDetailsPage() {
     }
   };
 
-  const handleUpdatePort = async () => {
-    if (newPort === '') {
-      addToast('Please enter a port number', 'error');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const response = await fetch(`/api/teams/${teamName}/port`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hostPort: newPort }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        addToast('Port updated successfully', 'success');
-      } else {
-        addToast(data.message || 'Failed to update port', 'error');
-      }
-    } catch (err) {
-      addToast('Failed to update port', 'error');
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const handleDeploy = async () => {
     setDeploying(true);
@@ -477,38 +429,6 @@ export default function TeamDetailsPage() {
         </div>
       )}
 
-      {/* Port Configuration */}
-      <div className="mb-8 bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-xl font-semibold text-slate-900 mb-4 flex items-center gap-2">
-          <Zap size={20} className="text-amber-500" />
-          Port Configuration
-        </h2>
-        <div className="flex gap-4 items-end">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Localhost Port
-            </label>
-            <input
-              type="number"
-              value={newPort}
-              onChange={(e) => setNewPort(e.target.value ? parseInt(e.target.value) : '')}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="e.g., 61555"
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              The port exposed on localhost in development
-            </p>
-          </div>
-          <button
-            onClick={handleUpdatePort}
-            disabled={saving}
-            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
-          >
-            Update Port
-          </button>
-        </div>
-      </div>
-
       {/* Branch Configuration */}
       <div className="mb-8 bg-white rounded-lg shadow-md p-6">
         <h2 className="text-xl font-semibold text-slate-900 mb-4 flex items-center gap-2">
@@ -530,7 +450,7 @@ export default function TeamDetailsPage() {
               value={newBranch}
               onChange={(e) => setNewBranch(e.target.value)}
               placeholder="e.g., main, develop, feature/new-ui"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-black"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900"
             />
           </div>
           <button
@@ -674,7 +594,7 @@ export default function TeamDetailsPage() {
                 onChange={(e) =>
                   handleEnvVarChange(index, 'key', e.target.value)
                 }
-                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-black placeholder-slate-500"
+                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
                 placeholder="KEY"
                 disabled={saving}
               />
@@ -684,7 +604,7 @@ export default function TeamDetailsPage() {
                 onChange={(e) =>
                   handleEnvVarChange(index, 'value', e.target.value)
                 }
-                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-black placeholder-slate-500"
+                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
                 placeholder="value"
                 disabled={saving}
               />

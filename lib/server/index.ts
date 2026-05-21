@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import * as net from 'net';
 import * as path from 'path';
+import * as YAML from 'js-yaml';
 import { isTesting, logTestingMode, adjustPathForTesting } from '../env';
 
 const execAsync = promisify(exec);
@@ -42,13 +43,111 @@ export async function generateWebhookSecret(): Promise<string> {
   return stdout.trim();
 }
 
-export async function gitClone(repoUrl: string, targetDir: string): Promise<void> {
+const formatGitAccessError = (error: Error) => {
+  const message = error.message.toLowerCase();
+  if (message.includes('authentication failed') || message.includes('access denied')) {
+    return 'Repository not accessible. Please check credentials or access permissions.';
+  }
+  if (message.includes('repository not found')) {
+    return 'Repository not found or you do not have access to it.';
+  }
+  if (message.includes('could not read from remote repository')) {
+    return 'Unable to read from remote repository. Verify the URL and access rights.';
+  }
+  return `Git error: ${error.message}`;
+};
+
+async function remoteBranchExists(repoUrl: string, branch: string): Promise<boolean> {
+  try {
+    const { stdout } = await executeCommand(
+      `git ls-remote --heads "${repoUrl}" "${branch}"`
+    );
+    return stdout.trim().length > 0;
+  } catch (error) {
+    throw new Error(formatGitAccessError(error as Error));
+  }
+}
+
+async function getRemoteDefaultBranch(repoUrl: string): Promise<string | null> {
+  try {
+    const { stdout } = await executeCommand(
+      `git ls-remote --symref "${repoUrl}" HEAD`
+    );
+    const match = stdout.match(/ref:\s+refs\/heads\/([^\s]+)\s+HEAD/);
+    return match?.[1] || null;
+  } catch (error) {
+    throw new Error(formatGitAccessError(error as Error));
+  }
+}
+
+async function getFirstRemoteBranch(repoUrl: string): Promise<string | null> {
+  try {
+    const { stdout } = await executeCommand(`git ls-remote --heads "${repoUrl}"`);
+    const first = stdout.split('\n').map(line => line.trim()).find(Boolean);
+    if (!first) return null;
+    const match = first.match(/refs\/heads\/([^\s]+)/);
+    return match?.[1] || null;
+  } catch (error) {
+    throw new Error(formatGitAccessError(error as Error));
+  }
+}
+
+export async function resolveGitBranch(
+  repoUrl: string,
+  requestedBranch?: string
+): Promise<{ branch: string; defaultBranch?: string }> {
+  const defaultBranch = await getRemoteDefaultBranch(repoUrl);
+
+  if (requestedBranch) {
+    const exists = await remoteBranchExists(repoUrl, requestedBranch);
+    if (!exists) {
+      const fallbackHint = defaultBranch
+        ? `Default branch is '${defaultBranch}'.`
+        : 'Please verify the branch name.';
+      throw new Error(`Branch '${requestedBranch}' not found. ${fallbackHint}`);
+    }
+    return { branch: requestedBranch, defaultBranch: defaultBranch || undefined };
+  }
+
+  if (defaultBranch) {
+    return { branch: defaultBranch, defaultBranch };
+  }
+
+  if (await remoteBranchExists(repoUrl, 'main')) {
+    return { branch: 'main', defaultBranch: 'main' };
+  }
+
+  if (await remoteBranchExists(repoUrl, 'master')) {
+    return { branch: 'master', defaultBranch: 'master' };
+  }
+
+  const firstBranch = await getFirstRemoteBranch(repoUrl);
+  if (firstBranch) {
+    return { branch: firstBranch, defaultBranch: firstBranch };
+  }
+
+  throw new Error('Unable to detect any branches in the repository.');
+}
+
+export async function gitClone(
+  repoUrl: string,
+  targetDir: string,
+  options?: { branch?: string }
+): Promise<{ branch: string; defaultBranch?: string }> {
   if (isTesting) {
     logTestingMode(`Would clone ${repoUrl} to ${targetDir}`);
-    return;
+    return { branch: options?.branch || 'main' };
   }
-  
-  await executeCommand(`git clone "${repoUrl}" "${targetDir}"`);
+
+  const resolved = await resolveGitBranch(repoUrl, options?.branch);
+  try {
+    await executeCommand(
+      `git clone --branch "${resolved.branch}" --single-branch "${repoUrl}" "${targetDir}"`
+    );
+    return resolved;
+  } catch (error) {
+    throw new Error(formatGitAccessError(error as Error));
+  }
 }
 
 export async function reloadCaddy(): Promise<void> {
@@ -272,13 +371,82 @@ export async function chmod(filePath: string, mode: number): Promise<void> {
   await fs.chmod(adjustedPath, mode);
 }
 
+async function findComposeFilePath(teamDir: string): Promise<string | undefined> {
+  const composeFiles = ['docker-compose.yml', 'docker-compose.yaml'];
+  for (const file of composeFiles) {
+    const filePath = path.join(teamDir, file);
+    if (await fileExists(filePath)) {
+      return filePath;
+    }
+  }
+  return undefined;
+}
+
+async function generateRuntimeComposeFile(teamDir: string): Promise<string | undefined> {
+  const composeFilePath = await findComposeFilePath(teamDir);
+  if (!composeFilePath) {
+    return undefined;
+  }
+
+  const overridePath = path.join(teamDir, 'docker-compose.override.yml');
+  if (!(await fileExists(overridePath))) {
+    return undefined;
+  }
+
+  const composeContent = await readFile(composeFilePath);
+  const overrideContent = await readFile(overridePath);
+  const compose = YAML.load(composeContent) as any;
+  const override = YAML.load(overrideContent) as any;
+
+  if (!compose || typeof compose !== 'object' || !compose.services || !override || typeof override !== 'object' || !override.services) {
+    return undefined;
+  }
+
+  const overrideServiceNames = Object.keys(override.services);
+  for (const serviceName of overrideServiceNames) {
+    if (compose.services[serviceName] && compose.services[serviceName].ports) {
+      delete compose.services[serviceName].ports;
+    }
+  }
+
+  const runtimeComposePath = path.join(teamDir, 'docker-compose.runtime.yml');
+  const runtimeContent = YAML.dump(compose, { noRefs: true, lineWidth: 120 });
+  await fs.writeFile(runtimeComposePath, runtimeContent, 'utf-8');
+  return runtimeComposePath;
+}
+
 export async function restartContainers(teamDir: string): Promise<void> {
   if (isTesting) {
     logTestingMode(`Would run docker compose up in ${teamDir}`);
     return;
   }
-  
-  await executeCommand(`cd "${teamDir}" && docker compose up -d --force-recreate`);
+
+  const runtimeComposePath = await generateRuntimeComposeFile(teamDir);
+  const overridePath = path.join(teamDir, 'docker-compose.override.yml');
+  const composeArgs: string[] = [];
+
+  if (runtimeComposePath) {
+    composeArgs.push('-f', `"${runtimeComposePath}"`);
+  } else {
+    const defaultCompose = await findComposeFilePath(teamDir);
+    if (defaultCompose) {
+      composeArgs.push('-f', `"${defaultCompose}"`);
+    }
+  }
+
+  if (await fileExists(overridePath)) {
+    composeArgs.push('-f', `"${overridePath}"`);
+  }
+
+  const composeBase = composeArgs.length > 0
+    ? `docker compose ${composeArgs.join(' ')}`
+    : 'docker compose';
+
+  // First, stop and remove existing containers to free up ports
+  await executeCommand(`cd "${teamDir}" && ${composeBase} down --remove-orphans`);
+
+  // Then bring up containers
+  await executeCommand(`cd "${teamDir}" && ${composeBase} up -d`);
 }
 
 export async function deployTeam(teamDir: string, teamName?: string): Promise<void> {

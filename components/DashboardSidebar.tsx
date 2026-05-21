@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { LayoutGrid, Plus, LogOut, User } from 'lucide-react';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 export function DashboardSidebar() {
   const pathname = usePathname();
@@ -31,7 +32,7 @@ export function DashboardSidebar() {
   };
 
   return (
-    <div className="w-64 bg-slate-900 text-white min-h-screen fixed left-0 top-0 shadow-lg flex flex-col">
+  <div className="w-64 bg-slate-900 text-white min-h-screen fixed left-0 top-0 shadow-lg flex flex-col overflow-x-hidden">
       {/* Logo */}
       <div className="p-6 border-b border-slate-700">
         <h1 className="text-xl font-bold flex items-center gap-2">
@@ -71,6 +72,7 @@ export function DashboardSidebar() {
 
       {/* Bottom Section */}
       <div className="border-t border-slate-700 p-4 space-y-4">
+        <ThemeToggle />
         {/* User Info */}
         {username && (
           <div className="px-4 py-3 bg-slate-800 rounded-lg flex items-center gap-3">

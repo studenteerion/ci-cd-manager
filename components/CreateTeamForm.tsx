@@ -1,8 +1,16 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Plus } from 'lucide-react';
 import { DownloadCloud } from 'lucide-react';
+import {
+  EnvEntry,
+  mergeEnvEntries,
+  parseEnvContent,
+  validateEnvEntries,
+} from '@/lib/env-file';
+import { BranchSelector } from '@/components/BranchSelector';
+import { fetchGitHubBranches, isGitHubRepoUrl } from '@/lib/github/client';
 
 interface EnvVariable {
   key: string;
@@ -17,18 +25,28 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
   const [teamName, setTeamName] = useState('');
   const [repositoryUrl, setRepositoryUrl] = useState('');
   const [domain, setDomain] = useState('');
-  const [hostPort, setHostPort] = useState('');
-  const [branch, setBranch] = useState('main');
+  const [subdomain, setSubdomain] = useState('');
+  const [subdomainTouched, setSubdomainTouched] = useState(false);
+  const [branch, setBranch] = useState('');
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [branchStatus, setBranchStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [branchError, setBranchError] = useState('');
+  const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [envVariables, setEnvVariables] = useState<EnvVariable[]>([
     { key: '', value: '' },
   ]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [domainTouched, setDomainTouched] = useState(false);
   const baseDomain = process.env.NEXT_PUBLIC_BASE_DOMAIN || '';
+  const computedDomain = baseDomain
+    ? (subdomain ? `${subdomain}.${baseDomain}` : '')
+    : domain;
   const [envUploadOpen, setEnvUploadOpen] = useState(false);
   const [envDragActive, setEnvDragActive] = useState(false);
+  const branchFetchAbortRef = useRef<AbortController | null>(null);
+  const branchFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const branchTouchedRef = useRef(false);
 
   const handleAddEnvVar = () => {
     setEnvVariables([...envVariables, { key: '', value: '' }]);
@@ -36,59 +54,30 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
 
   const handleTeamNameChange = (value: string) => {
     setTeamName(value);
-    if (baseDomain && value && !domainTouched) {
-      setDomain(`${value}.${baseDomain}`);
+    if (baseDomain && value && !subdomainTouched) {
+      setSubdomain(value);
     }
   };
 
   const handleTeamNameBlur = () => {
-    if (baseDomain && teamName && !domainTouched) {
-      setDomain(`${teamName}.${baseDomain}`);
+    if (baseDomain && teamName && !subdomainTouched) {
+      setSubdomain(teamName);
     }
   };
 
-  // Parse .env file content into a key->value map
-  const parseEnvContent = (text: string) => {
-    const result: Record<string, string> = {};
-    text.split(/\r?\n/).forEach((raw) => {
-      const line = raw.trim();
-      if (!line || line.startsWith('#')) return;
-      const idx = line.indexOf('=');
-      if (idx === -1) return;
-      const key = line.slice(0, idx).trim();
-      const valuePart = line.slice(idx + 1).trim();
-      const hashIdx = valuePart.indexOf('#');
-      const value = (hashIdx >= 0 ? valuePart.slice(0, hashIdx) : valuePart).trim();
-      if (key) result[key] = value;
-    });
-    return result;
+  const handleRepositoryChange = (value: string) => {
+    setRepositoryUrl(value);
+    branchTouchedRef.current = false;
   };
 
-  // Merge parsed env object into current envVariables array.
-  // Existing keys are overwritten; new keys are appended. Preserves current key order.
-  const mergeEnvArrayWithObject = (
-    current: EnvVariable[],
-    parsed: Record<string, string>
-  ) => {
-    const order: string[] = [];
-    const map = new Map<string, string>();
-
-    current.forEach(({ key, value }) => {
-      if (key) {
-        if (!order.includes(key)) order.push(key);
-        map.set(key, value);
-      }
-    });
-
-    Object.entries(parsed).forEach(([k, v]) => {
-      if (!order.includes(k)) order.push(k);
-      map.set(k, v);
-    });
-
-    const merged = order.map((k) => ({ key: k, value: map.get(k) || '' }));
-    if (merged.length === 0) merged.push({ key: '', value: '' });
-    return merged;
-  };
+  const toEnvEntries = (vars: EnvVariable[]): EnvEntry[] =>
+    vars
+      .filter((env) => env.key.trim() || env.value.trim())
+      .map((env, index) => ({
+        key: env.key.trim(),
+        value: env.value ?? '',
+        line: index + 1,
+      }));
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -99,20 +88,25 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
     reader.onload = () => {
       const text = String(reader.result || '');
       const parsed = parseEnvContent(text);
-      if (Object.keys(parsed).length === 0) {
+      if (parsed.errors.length > 0) {
+        setError(`Malformed .env: ${parsed.errors.join(' | ')}`);
+        return;
+      }
+      if (parsed.entries.length === 0) {
         setError('Uploaded file contained no environment variables');
         return;
       }
 
       const existingKeys = new Set(envVariables.map((v) => v.key).filter(Boolean));
-      const merged = mergeEnvArrayWithObject(envVariables, parsed);
+      const mergedEntries = mergeEnvEntries(toEnvEntries(envVariables), parsed.entries);
+      const merged = mergedEntries.map((entry) => ({ key: entry.key, value: entry.value }));
       let added = 0;
       let updated = 0;
-      Object.keys(parsed).forEach((k) => {
-        if (existingKeys.has(k)) updated++; else added++;
+      parsed.entries.forEach((entry) => {
+        if (existingKeys.has(entry.key)) updated += 1; else added += 1;
       });
-      setEnvVariables(merged);
-      setSuccess(`Imported ${Object.keys(parsed).length} variables (${updated} updated, ${added} added)`);
+      setEnvVariables(merged.length > 0 ? merged : [{ key: '', value: '' }]);
+      setSuccess(`Imported ${parsed.entries.length} variables (${updated} updated, ${added} added)`);
       if (fileInputRef.current) fileInputRef.current.value = '';
       setEnvUploadOpen(false);
     };
@@ -146,6 +140,94 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
     setEnvVariables(updated);
   };
 
+  useEffect(() => {
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed) {
+      setBranchOptions([]);
+      setBranchStatus('idle');
+      setBranchError('');
+      setDefaultBranch(null);
+      setBranch('');
+      return;
+    }
+
+    if (!isGitHubRepoUrl(trimmed)) {
+      setBranchOptions([]);
+      setBranchStatus('error');
+      setBranchError('Inserisci un link GitHub valido (es. https://github.com/org/repo).');
+      setDefaultBranch(null);
+      setBranch('');
+      return;
+    }
+
+    if (branchFetchTimeoutRef.current) {
+      clearTimeout(branchFetchTimeoutRef.current);
+    }
+    branchFetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    branchFetchAbortRef.current = controller;
+
+  setBranchOptions([]);
+  setDefaultBranch(null);
+    setBranchStatus('loading');
+    setBranchError('');
+
+    branchFetchTimeoutRef.current = setTimeout(async () => {
+      try {
+        console.info('[GitHub] Fetching branches', { repositoryUrl: trimmed });
+        const response = await fetchGitHubBranches(trimmed, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+
+        if (!response.success) {
+          setBranchOptions([]);
+          setBranchStatus('error');
+          setBranchError(response.message || 'Impossibile recuperare i branch dal repository.');
+          setDefaultBranch(null);
+          setBranch('');
+          console.warn('[GitHub] Branch fetch failed', response.message);
+          return;
+        }
+
+        setBranchOptions(response.branches);
+        setDefaultBranch(response.defaultBranch ?? null);
+        setBranchStatus('success');
+
+        if (response.branches.length === 0) {
+          setBranch('');
+          setBranchError('Nessun branch disponibile per questo repository.');
+          return;
+        }
+
+        setBranchError('');
+        if (!branchTouchedRef.current) {
+          const preferred = response.defaultBranch && response.branches.includes(response.defaultBranch)
+            ? response.defaultBranch
+            : response.branches[0];
+          if (preferred) setBranch(preferred);
+        }
+        console.info('[GitHub] Branch fetch success', {
+          total: response.branches.length,
+          defaultBranch: response.defaultBranch,
+        });
+      } catch (error) {
+        if ((error as Error).name === 'AbortError') return;
+        console.error('[GitHub] Branch fetch error', error);
+        setBranchOptions([]);
+        setBranchStatus('error');
+        setBranchError('Errore durante il recupero dei branch dal repository.');
+        setDefaultBranch(null);
+        setBranch('');
+      }
+    }, 600);
+
+    return () => {
+      if (branchFetchTimeoutRef.current) {
+        clearTimeout(branchFetchTimeoutRef.current);
+      }
+      controller.abort();
+    };
+  }, [repositoryUrl]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -153,18 +235,28 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
     setLoading(true);
 
     try {
-      if (!teamName || !repositoryUrl || !domain || !hostPort) {
+      const finalDomain = baseDomain ? computedDomain : domain;
+      if (!teamName || !repositoryUrl || !finalDomain) {
         setError('Please fill in all required fields');
         return;
       }
 
-      const envObj = envVariables.reduce(
-        (acc, { key, value }) => {
-          if (key) acc[key] = value;
-          return acc;
-        },
-        {} as Record<string, string>
-      );
+      if (!branchOptions.length || !branch) {
+        setError('Seleziona un branch dal repository GitHub');
+        return;
+      }
+
+      if (envVariables.some((env) => !env.key.trim() && env.value.trim())) {
+        setError('Environment variable keys cannot be empty when a value is provided');
+        return;
+      }
+
+      const envEntries = toEnvEntries(envVariables);
+      const validation = validateEnvEntries(envEntries);
+      if (validation.errors.length > 0) {
+        setError(`Invalid environment variables: ${validation.errors.join(' | ')}`);
+        return;
+      }
 
       const response = await fetch('/api/teams/create', {
         method: 'POST',
@@ -172,27 +264,26 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
         body: JSON.stringify({
           teamName,
           repositoryUrl,
-          domain,
-          hostPort: parseInt(hostPort),
+          domain: finalDomain,
           branch,
-          envVariables: envObj,
+          envEntries: validation.entries,
         }),
       });
 
       const data = await response.json();
 
       if (data.success) {
-        const assignedPort = data.hostPort || hostPort;
-        const portInfo = data.hostPort && data.hostPort !== parseInt(hostPort) 
-          ? ` (Port ${parseInt(hostPort)} was occupied, assigned ${data.hostPort})`
-          : '';
-        setSuccess(`Team created successfully on port ${assignedPort}${portInfo}. Webhook secret: ${data.webhookSecret}`);
+        setSuccess(`Team created successfully. Webhook secret: ${data.webhookSecret}`);
         setTeamName('');
         setRepositoryUrl('');
         setDomain('');
-  setDomainTouched(false);
-        setHostPort('');
-        setBranch('main');
+        setSubdomain('');
+        setSubdomainTouched(false);
+  setBranch('');
+  setBranchOptions([]);
+  setBranchStatus('idle');
+  setBranchError('');
+  setDefaultBranch(null);
         setEnvVariables([{ key: '', value: '' }]);
         
         // Call parent callback to refresh teams list
@@ -225,7 +316,7 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
             value={teamName}
             onChange={(e) => handleTeamNameChange(e.target.value)}
             onBlur={handleTeamNameBlur}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-black placeholder-slate-500"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
             placeholder="e.g., alpha, beta"
             disabled={loading}
           />
@@ -238,8 +329,8 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
           <input
             type="url"
             value={repositoryUrl}
-            onChange={(e) => setRepositoryUrl(e.target.value)}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-black placeholder-slate-500"
+            onChange={(e) => handleRepositoryChange(e.target.value)}
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
             placeholder="https://github.com/org/repo.git"
             disabled={loading}
           />
@@ -247,51 +338,53 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
 
         <div>
           <label className="block text-sm font-medium text-slate-900 mb-1">
-            Domain *
+            {baseDomain ? 'Subdomain *' : 'Domain *'}
           </label>
-          <input
-            type="text"
-            value={domain}
-            onChange={(e) => {
-              setDomain(e.target.value);
-              setDomainTouched(true);
-            }}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-black placeholder-slate-500"
-            placeholder="alpha.example.com"
-            disabled={loading}
-          />
+          {baseDomain ? (
+            <div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={subdomain}
+                  onChange={(e) => {
+                    setSubdomain(e.target.value.trim());
+                    setSubdomainTouched(true);
+                  }}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
+                  placeholder="e.g., alpha"
+                  disabled={loading}
+                />
+                <span className="text-sm text-slate-500">.{baseDomain}</span>
+              </div>
+              <p className="text-xs text-slate-600 mt-1">
+                Full domain: {computedDomain || `your-team.${baseDomain}`}
+              </p>
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
+              placeholder="alpha.example.com"
+              disabled={loading}
+            />
+          )}
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-slate-900 mb-1">
-            Host Port (localhost) *
-          </label>
-          <input
-            type="number"
-            value={hostPort}
-            onChange={(e) => setHostPort(e.target.value)}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-black placeholder-slate-500"
-            placeholder="8000"
-            min="1000"
-            max="65535"
-            disabled={loading}
-          />
-          <p className="text-xs text-slate-600 mt-1">Port for Caddy reverse proxy on localhost</p>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-900 mb-1">
-            Git Branch
-          </label>
-          <input
-            type="text"
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-black placeholder-slate-500"
-            placeholder="main"
-            disabled={loading}
-          />
-        </div>
+        <BranchSelector
+          branch={branch}
+          branches={branchOptions}
+          defaultBranch={defaultBranch}
+          loading={branchStatus === 'loading'}
+          error={branchError}
+          disabled={loading || !isGitHubRepoUrl(repositoryUrl)}
+          placeholderLabel="Inserisci il link del repository"
+          onBranchChange={setBranch}
+          onTouched={() => {
+            branchTouchedRef.current = true;
+          }}
+        />
 
         <div>
           <div className="flex items-center justify-between mb-3">
