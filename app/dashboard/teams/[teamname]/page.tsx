@@ -30,6 +30,10 @@ export default function TeamDetailsPage() {
   const router = useRouter();
   const { addToast } = useToast();
   const teamName = params.teamname as string;
+  const webhookBaseUrl = process.env.NEXT_PUBLIC_WEBHOOK_BASE_URL ?? '';
+  const webhookUrl = webhookBaseUrl
+    ? `${webhookBaseUrl.replace(/\/$/, '')}/hooks/${teamName}`
+    : '';
 
   const [config, setConfig] = useState<TeamConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,6 +63,7 @@ export default function TeamDetailsPage() {
   const deployLogsRef = useRef<HTMLDivElement | null>(null);
   const deployLogsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [deployLogsAutoScroll, setDeployLogsAutoScroll] = useState(true);
+  const deployLogsAutoScrollRef = useRef(true);
   const [envVariables, setEnvVariables] = useState<EnvVariable[]>([
     { key: '', value: '' },
   ]);
@@ -86,7 +91,7 @@ export default function TeamDetailsPage() {
   }, [logsOpen, logsText]);
 
   useEffect(() => {
-    if (deployLogsOpen && deployLogsRef.current && deployLogsAutoScroll) {
+    if (deployLogsOpen && deployLogsRef.current && deployLogsAutoScrollRef.current) {
       deployLogsRef.current.scrollTop = deployLogsRef.current.scrollHeight;
     }
   }, [deployLogsOpen, deployLogsText, deployLogsAutoScroll]);
@@ -432,7 +437,7 @@ export default function TeamDetailsPage() {
       console.error(err);
     } finally {
       setDeployLogsLoading(false);
-      if (deployLogsRef.current && deployLogsAutoScroll) {
+      if (deployLogsRef.current && deployLogsAutoScrollRef.current) {
         deployLogsRef.current.scrollTop = deployLogsRef.current.scrollHeight;
       }
     }
@@ -553,6 +558,19 @@ export default function TeamDetailsPage() {
     }
   };
 
+  const handleCopyWebhookUrl = async () => {
+    if (!webhookUrl) {
+      addToast('Webhook base URL non configurato', 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      addToast('Webhook URL copiato negli appunti', 'success');
+    } catch (err) {
+      addToast('Impossibile copiare il webhook URL', 'error');
+    }
+  };
+
   const handleRegenerateSecret = async () => {
     if (!confirm('Are you sure you want to regenerate the webhook secret? This will invalidate the current secret.')) {
       return;
@@ -592,8 +610,9 @@ export default function TeamDetailsPage() {
       {/* Header */}
       <div className="mb-8 flex items-center gap-4">
         <button
-          onClick={() => router.back()}
+          onClick={() => router.push('/dashboard/teams')}
           className="p-2 leading-none hover:bg-slate-100 rounded-lg transition flex items-center justify-center"
+          aria-label="Torna all'elenco team"
         >
           <ChevronLeft size={24} className="text-slate-600" />
         </button>
@@ -893,6 +912,28 @@ export default function TeamDetailsPage() {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
+              Webhook URL
+            </label>
+            <div className="flex gap-2">
+              <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg">
+                <span className="font-mono text-slate-900 flex-1 break-all">
+                  {webhookUrl || 'Configura NEXT_PUBLIC_WEBHOOK_BASE_URL'}
+                </span>
+              </div>
+              <button
+                onClick={handleCopyWebhookUrl}
+                disabled={!webhookUrl}
+                className="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg transition flex items-center gap-2 leading-none disabled:opacity-50"
+              >
+                <Copy size={18} />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Questo URL verrà usato dai webhook: {`{base}/hooks/{team}`}
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
               Secret Key
             </label>
             <div className="flex gap-2">
@@ -1036,6 +1077,7 @@ export default function TeamDetailsPage() {
                   if (!el) return;
                   const threshold = 24;
                   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+                  deployLogsAutoScrollRef.current = atBottom;
                   setDeployLogsAutoScroll(atBottom);
                 }}
                 className="border border-slate-200 rounded-lg bg-slate-900 text-slate-100 text-xs font-mono p-4 h-72 overflow-auto whitespace-pre-wrap break-all"

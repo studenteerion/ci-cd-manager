@@ -12,7 +12,7 @@ export default function CreateTeamPage() {
       </div>
 
       {/* Form */}
-      <div className="max-w-2xl">
+      <div className="w-full">
         <CreateTeamForm onSuccess={() => {}} />
       </div>
     </>
