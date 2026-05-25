@@ -42,3 +42,6 @@ users.json
 
 # Testing temp folder
 /temp
+
+# Generated analysis reports
+/docs/application-analysis.md

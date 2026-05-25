@@ -350,15 +350,13 @@ sudo docker compose -f /opt/apps/webhook/docker-compose.yml restart
 - [ ] Teams list displays newly created teams
 - [ ] Session authentication works
 - [ ] Logout clears session cookie
-- [ ] Middleware redirects unauthenticated users to login
+- [ ] Proxy redirects unauthenticated users to login
 
 ## Known Issues
 
-1. **Middleware Deprecation Warning**: Next.js recommends using Proxy instead of Middleware. This is a non-breaking warning and the app functions correctly.
+1. **OpenSSL on macOS**: The `openssl` command behavior varies between macOS and Linux. Tests should run on Ubuntu.
 
-2. **OpenSSL on macOS**: The `openssl` command behavior varies between macOS and Linux. Tests should run on Ubuntu.
-
-3. **Git Clone Requires Network**: Repository must be accessible via HTTPS from the running environment.
+2. **Git Clone Requires Network**: Repository must be accessible via HTTPS from the running environment.
 
 ## Notes for Developers
 

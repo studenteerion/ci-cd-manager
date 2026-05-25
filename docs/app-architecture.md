@@ -113,16 +113,16 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
 
 ---
 
-### 4. **Middleware per Protezione di Sistema**
+### 4. **Proxy per Protezione di Sistema**
 
 #### Cosa fa una app Next.js normal:
-- Middleware per rewriting URL, internazionalizzazione
+- Proxy per rewriting URL, internazionalizzazione
 - Non tocca l'autenticazione sensibile
 
 #### Cosa fa questa app:
 ```typescript
-// middleware.ts
-export function middleware(request: NextRequest) {
+// proxy.ts
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Blocca TUTTI i route tranne login e auth
@@ -343,7 +343,7 @@ export function validateCredentials(username: string, password: string): boolean
 | **Data Source** | Database (SQL/NoSQL) | File System |
 | **Esecuzione Comandi** | No | Sì (git, systemctl, docker) |
 | **Modifiche File** | No | Sì (config, script) |
-| **Middleware** | Opzionale, leggero | **Critico** - blocca tutto |
+| **Proxy** | Opzionale, leggero | **Critico** - blocca tutto |
 | **Server Actions** | Helper opzionali | **Core business logic** |
 | **API Side Effects** | Data CRUD | Infrastruttura management |
 | **Autenticazione** | Robusta (OAuth/JWT) | Semplificata (demo) |
@@ -381,7 +381,7 @@ Questa app è un **deployment orchestrator** per:
 
 1. **Server Actions sono non-optional** - Contengono intera orchestrazione
 2. **File system è il database** - Niente persistenza esterna richiesta
-3. **Middleware è security-critical** - Protegge accesso a infrastruttura
+3. **Proxy è security-critical** - Protegge accesso a infrastruttura
 4. **Template generation** - Configurazione dinamica per ogni team
 5. **Command execution** - Evitare injection, sempre validare input
 
@@ -394,7 +394,7 @@ Quando sviluppi questa app, ricorda:
 - ✅ Server Actions **non possono** diventare Client Components
 - ✅ File I/O **deve** essere in Server Actions/API routes
 - ✅ Comando di sistema esecuzione **richiede** input validation
-- ✅ Middleware **blocca** tutto tranne \`/login\` e \`/api/auth/login\`
+- ✅ Proxy **blocca** tutto tranne \`/login\` e \`/api/auth/login\`
 - ✅ Template generation **supporta** multi-tenancy
 - ✅ Errori in \`createTeam\` potrebbero lasciare file parziali
 - ✅ \`@/lib/server\` exports sono **only for server**
@@ -442,5 +442,5 @@ Prima di mettere in produzione:
 - \`lib/server/index.ts\` - Core system integration
 - \`lib/templates/index.ts\` - Configuration generation
 - \`actions/teams.ts\` - Multi-step orchestration
-- \`middleware.ts\` - Auth protection
+- \`proxy.ts\` - Auth protection
 - \`app/api/teams/create/route.ts\` - Team creation endpoint

@@ -31,7 +31,7 @@ This application manages a multi-tenant deployment infrastructure. Unlike a typi
 - Frontend: React + TypeScript
 - Backend: Next.js Server Actions + Route Handlers
 - Infrastructure Management: Caddy (reverse proxy), Docker Compose, Git, Webhooks
-- Security: httpOnly cookies, middleware-based access control
+- Security: httpOnly cookies, proxy-based access control
 
 ---
 
@@ -51,7 +51,7 @@ Set httpOnly cookie
     ↓
 Redirect to /dashboard
     ↓
-middleware.ts checks cookie
+proxy.ts checks cookie
     ↓
 Dashboard (protected)
 ```
@@ -92,7 +92,7 @@ Dashboard (protected)
 - Cookie value: Simple token (in demo: just 'authenticated')
 - Browser sends this cookie with every subsequent request
 
-#### 5. **Middleware Protection** (`middleware.ts`)
+#### 5. **Proxy Protection** (`proxy.ts`)
 ```typescript
 // Runs on EVERY request
 // Flow:
@@ -355,7 +355,7 @@ TeamList (Client)
 │     (session cookie sent automatically)                     │
 │                                                              │
 │     ├─────────────────────────────────────────────────────►│
-│     │          middleware.ts                               │
+│     │          proxy.ts                                    │
 │     │          1. Extract session cookie                   │
 │     │          2. Cookie exists? Yes                       │
 │     │          3. Allow request                            │
@@ -821,7 +821,7 @@ CreateTeamForm.tsx
 
 3. **Server Actions as Core Logic**: All business logic uses `'use server'`. API routes delegate to server actions.
 
-4. **Middleware Security**: Single point of access control for all protected routes.
+4. **Proxy Security**: Single point of access control for all protected routes.
 
 5. **Template-Driven Configuration**: Caddy config, deploy script, and webhook entries are generated dynamically based on team data.
 

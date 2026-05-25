@@ -159,9 +159,9 @@ None required for local development. For production:
 NODE_ENV=production
 ```
 
-## Middleware Configuration
+## Proxy Configuration
 
-The `middleware.ts` file protects all routes except:
+The `proxy.ts` file protects all routes except:
 - `/login`
 - `/api/auth/login`
 

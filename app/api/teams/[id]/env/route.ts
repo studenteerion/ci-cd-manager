@@ -32,6 +32,7 @@ export async function GET(
       success: true,
       env: config.env,
       domain: config.domain,
+      repository: config.repository,
       envEntries: config.envEntries,
       envParseErrors: config.envParseErrors,
       envParseWarnings: config.envParseWarnings,

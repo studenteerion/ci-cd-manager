@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Cog, Code2, GitBranch, DownloadCloud } from 'lucide-react';
+import { X, Cog, Code2, GitBranch, DownloadCloud, RefreshCw } from 'lucide-react';
 import { TeamConfig } from '@/actions/teams';
+import { BranchSelector } from '@/components/BranchSelector';
+import { fetchGitHubBranches, isGitHubRepoUrl } from '@/lib/github/client';
 import {
   EnvEntry,
   mergeEnvEntries,
@@ -25,17 +27,103 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
   const [deploying, setDeploying] = useState(false);
   const [branch, setBranch] = useState('main');
   const [newBranch, setNewBranch] = useState('');
+  const [repositoryUrl, setRepositoryUrl] = useState('');
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [branchStatus, setBranchStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [branchError, setBranchError] = useState('');
+  const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [envText, setEnvText] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [envUploadOpen, setEnvUploadOpen] = useState(false);
   const [envDragActive, setEnvDragActive] = useState(false);
+  const branchFetchAbortRef = useRef<AbortController | null>(null);
+  const branchFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const branchTouchedRef = useRef(false);
 
   useEffect(() => {
     if (isOpen) {
       loadTeamConfig();
     }
   }, [isOpen, teamId]);
+
+  useEffect(() => {
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed) {
+      setBranchOptions([]);
+      setBranchStatus('idle');
+      setBranchError('');
+      setDefaultBranch(null);
+      return;
+    }
+
+    if (!isGitHubRepoUrl(trimmed)) {
+      setBranchOptions([]);
+      setBranchStatus('error');
+      setBranchError('Inserisci un link GitHub valido (es. https://github.com/org/repo).');
+      setDefaultBranch(null);
+      return;
+    }
+
+    if (branchFetchTimeoutRef.current) {
+      clearTimeout(branchFetchTimeoutRef.current);
+    }
+    branchFetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    branchFetchAbortRef.current = controller;
+
+    setBranchOptions([]);
+    setDefaultBranch(null);
+    setBranchStatus('loading');
+    setBranchError('');
+
+    branchFetchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await fetchGitHubBranches(trimmed, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+
+        if (!response.success) {
+          setBranchOptions([]);
+          setBranchStatus('error');
+          setBranchError(response.message || 'Impossibile recuperare i branch dal repository.');
+          setDefaultBranch(null);
+          return;
+        }
+
+        setBranchOptions(response.branches);
+        setDefaultBranch(response.defaultBranch ?? null);
+        setBranchStatus('success');
+
+        if (response.branches.length === 0) {
+          setBranchError('Nessun branch disponibile per questo repository.');
+          return;
+        }
+
+        setBranchError('');
+        if (!branchTouchedRef.current) {
+          const preferred = response.branches.includes(branch)
+            ? branch
+            : response.defaultBranch && response.branches.includes(response.defaultBranch)
+              ? response.defaultBranch
+              : response.branches[0];
+          if (preferred) setNewBranch(preferred);
+        }
+      } catch (error) {
+        if ((error as Error).name === 'AbortError') return;
+        setBranchOptions([]);
+        setBranchStatus('error');
+        setBranchError('Errore durante il recupero dei branch dal repository.');
+        setDefaultBranch(null);
+      }
+    }, 600);
+
+    return () => {
+      if (branchFetchTimeoutRef.current) {
+        clearTimeout(branchFetchTimeoutRef.current);
+      }
+      controller.abort();
+    };
+  }, [repositoryUrl, branch]);
 
   const loadTeamConfig = async () => {
     setLoading(true);
@@ -68,6 +156,9 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
       if (branchData.success) {
         setBranch(branchData.branch);
         setNewBranch(branchData.branch);
+      }
+      if (data.repository) {
+        setRepositoryUrl(data.repository);
       }
     } catch (err) {
       setError('Failed to load team configuration');
@@ -220,6 +311,63 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
     }
   };
 
+  const handleBranchRefresh = async () => {
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed || !isGitHubRepoUrl(trimmed)) {
+      setBranchError('Inserisci un link GitHub valido (es. https://github.com/org/repo).');
+      setBranchStatus('error');
+      return;
+    }
+
+    if (branchFetchTimeoutRef.current) {
+      clearTimeout(branchFetchTimeoutRef.current);
+    }
+    branchFetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    branchFetchAbortRef.current = controller;
+
+    setBranchStatus('loading');
+    setBranchError('');
+
+    try {
+      const response = await fetchGitHubBranches(trimmed, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+
+      if (!response.success) {
+        setBranchOptions([]);
+        setBranchStatus('error');
+        setBranchError(response.message || 'Impossibile recuperare i branch dal repository.');
+        setDefaultBranch(null);
+        return;
+      }
+
+      setBranchOptions(response.branches);
+      setDefaultBranch(response.defaultBranch ?? null);
+      setBranchStatus('success');
+
+      if (response.branches.length === 0) {
+        setBranchError('Nessun branch disponibile per questo repository.');
+        return;
+      }
+
+      setBranchError('');
+      if (!branchTouchedRef.current) {
+        const preferred = response.branches.includes(branch)
+          ? branch
+          : response.defaultBranch && response.branches.includes(response.defaultBranch)
+            ? response.defaultBranch
+            : response.branches[0];
+        if (preferred) setNewBranch(preferred);
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') return;
+      setBranchOptions([]);
+      setBranchStatus('error');
+      setBranchError('Errore durante il recupero dei branch dal repository.');
+      setDefaultBranch(null);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -258,6 +406,25 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
             <div className="text-center text-slate-600">Loading team configuration...</div>
           ) : (
             <>
+              {/* Manual Deploy */}
+              <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+                <h3 className="text-lg font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                  <DownloadCloud size={20} />
+                  Manual Deploy
+                </h3>
+                <p className="text-sm text-slate-600 mb-4">
+                  Trigger the deploy script immediately without waiting for webhook.
+                </p>
+                <button
+                  onClick={handleDeploy}
+                  disabled={deploying || saving}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
+                >
+                  <DownloadCloud size={18} />
+                  {deploying ? 'Deploying...' : 'Deploy Now'}
+                </button>
+              </div>
+
               {/* Current Branch */}
               <div className="bg-slate-50 rounded-lg p-4">
                 <h3 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
@@ -271,21 +438,42 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
 
               {/* Branch Selection */}
               <div className="border border-slate-200 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                  <GitBranch size={20} />
-                  Change Branch
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <GitBranch size={20} />
+                    Change Branch
+                  </h3>
+                  <button
+                    onClick={handleBranchRefresh}
+                    disabled={branchStatus === 'loading' || !repositoryUrl}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50 leading-none"
+                  >
+                    <RefreshCw size={16} />
+                    Aggiorna lista
+                  </button>
+                </div>
                 <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={newBranch}
-                    onChange={(e) => setNewBranch(e.target.value)}
-                    placeholder="Enter branch name (e.g., main, develop, production)"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
+                  <BranchSelector
+                    branch={newBranch}
+                    branches={branchOptions}
+                    defaultBranch={defaultBranch}
+                    loading={branchStatus === 'loading'}
+                    error={branchError}
+                    disabled={saving || deploying}
+                    placeholderLabel={branchStatus === 'loading'
+                      ? 'Scansione branch in corso...'
+                      : 'Seleziona un branch dal repository'}
+                    onBranchChange={(value) => {
+                      branchTouchedRef.current = true;
+                      setNewBranch(value);
+                    }}
+                    onTouched={() => {
+                      branchTouchedRef.current = true;
+                    }}
                   />
                   <button
                     onClick={handleUpdateBranch}
-                    disabled={saving || deploying || newBranch === branch}
+                    disabled={saving || deploying || newBranch === branch || branchOptions.length === 0}
                     className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
                   >
                     {saving ? 'Updating...' : 'Update Branch'}
@@ -390,24 +578,6 @@ DEBUG=true"
                 </button>
               </div>
 
-              {/* Manual Deploy */}
-              <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
-                <h3 className="text-lg font-semibold text-slate-900 mb-2 flex items-center gap-2">
-                  <DownloadCloud size={20} />
-                  Manual Deploy
-                </h3>
-                <p className="text-sm text-slate-600 mb-4">
-                  Trigger the deploy script immediately without waiting for webhook.
-                </p>
-                <button
-                  onClick={handleDeploy}
-                  disabled={deploying || saving}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
-                >
-                  <DownloadCloud size={18} />
-                  {deploying ? 'Deploying...' : 'Deploy Now'}
-                </button>
-              </div>
             </>
           )}
         </div>

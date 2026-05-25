@@ -146,6 +146,12 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
 .bg-white {
   background-color: var(--surface);
 }

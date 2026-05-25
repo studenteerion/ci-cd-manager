@@ -2,8 +2,10 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
-import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw } from 'lucide-react';
+import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw, Loader2, Terminal } from 'lucide-react';
 import { useToast } from '@/lib/context/ToastContext';
+import { BranchSelector } from '@/components/BranchSelector';
+import { fetchGitHubBranches, isGitHubRepoUrl } from '@/lib/github/client';
 import {
   EnvEntry,
   mergeEnvEntries,
@@ -37,6 +39,11 @@ export default function TeamDetailsPage() {
   const [containerName, setContainerName] = useState<string>('');
   const [branch, setBranch] = useState('main');
   const [newBranch, setNewBranch] = useState('');
+  const [repositoryUrl, setRepositoryUrl] = useState('');
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [branchStatus, setBranchStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [branchError, setBranchError] = useState('');
+  const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [webhookSecret, setWebhookSecret] = useState<string>('');
   const [showWebhookSecret, setShowWebhookSecret] = useState(false);
   const [regeneratingSecret, setRegeneratingSecret] = useState(false);
@@ -45,6 +52,13 @@ export default function TeamDetailsPage() {
   const [logsText, setLogsText] = useState('');
   const [logsError, setLogsError] = useState('');
   const logsRef = useRef<HTMLDivElement | null>(null);
+  const [deployLogsOpen, setDeployLogsOpen] = useState(false);
+  const [deployLogsLoading, setDeployLogsLoading] = useState(false);
+  const [deployLogsText, setDeployLogsText] = useState('');
+  const [deployLogsError, setDeployLogsError] = useState('');
+  const deployLogsRef = useRef<HTMLDivElement | null>(null);
+  const deployLogsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [deployLogsAutoScroll, setDeployLogsAutoScroll] = useState(true);
   const [envVariables, setEnvVariables] = useState<EnvVariable[]>([
     { key: '', value: '' },
   ]);
@@ -53,6 +67,13 @@ export default function TeamDetailsPage() {
   const [envDragActive, setEnvDragActive] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [showEnvValues, setShowEnvValues] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteInput, setDeleteInput] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const branchFetchAbortRef = useRef<AbortController | null>(null);
+  const branchFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const branchTouchedRef = useRef(false);
 
   useEffect(() => {
     loadTeamConfig();
@@ -63,6 +84,90 @@ export default function TeamDetailsPage() {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
   }, [logsOpen, logsText]);
+
+  useEffect(() => {
+    if (deployLogsOpen && deployLogsRef.current && deployLogsAutoScroll) {
+      deployLogsRef.current.scrollTop = deployLogsRef.current.scrollHeight;
+    }
+  }, [deployLogsOpen, deployLogsText, deployLogsAutoScroll]);
+
+  useEffect(() => {
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed) {
+      setBranchOptions([]);
+      setBranchStatus('idle');
+      setBranchError('');
+      setDefaultBranch(null);
+      return;
+    }
+
+    if (!isGitHubRepoUrl(trimmed)) {
+      setBranchOptions([]);
+      setBranchStatus('error');
+      setBranchError('Inserisci un link GitHub valido (es. https://github.com/org/repo).');
+      setDefaultBranch(null);
+      return;
+    }
+
+    if (branchFetchTimeoutRef.current) {
+      clearTimeout(branchFetchTimeoutRef.current);
+    }
+    branchFetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    branchFetchAbortRef.current = controller;
+
+    setBranchOptions([]);
+    setDefaultBranch(null);
+    setBranchStatus('loading');
+    setBranchError('');
+
+    branchFetchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await fetchGitHubBranches(trimmed, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+
+        if (!response.success) {
+          setBranchOptions([]);
+          setBranchStatus('error');
+          setBranchError(response.message || 'Impossibile recuperare i branch dal repository.');
+          setDefaultBranch(null);
+          return;
+        }
+
+        setBranchOptions(response.branches);
+        setDefaultBranch(response.defaultBranch ?? null);
+        setBranchStatus('success');
+
+        if (response.branches.length === 0) {
+          setBranchError('Nessun branch disponibile per questo repository.');
+          return;
+        }
+
+        setBranchError('');
+        if (!branchTouchedRef.current) {
+          const preferred = response.branches.includes(branch)
+            ? branch
+            : response.defaultBranch && response.branches.includes(response.defaultBranch)
+              ? response.defaultBranch
+              : response.branches[0];
+          if (preferred) setNewBranch(preferred);
+        }
+      } catch (error) {
+        if ((error as Error).name === 'AbortError') return;
+        setBranchOptions([]);
+        setBranchStatus('error');
+        setBranchError('Errore durante il recupero dei branch dal repository.');
+        setDefaultBranch(null);
+      }
+    }, 600);
+
+    return () => {
+      if (branchFetchTimeoutRef.current) {
+        clearTimeout(branchFetchTimeoutRef.current);
+      }
+      controller.abort();
+    };
+  }, [repositoryUrl, branch]);
 
   const handleAddEnvVar = () => {
     setEnvVariables([...envVariables, { key: '', value: '' }]);
@@ -173,6 +278,7 @@ export default function TeamDetailsPage() {
 
       if (branchData.success) {
         setBranch(branchData.branch || 'main');
+        setNewBranch(branchData.branch || 'main');
       }
 
       if (statusData.status) {
@@ -185,6 +291,10 @@ export default function TeamDetailsPage() {
 
       if (webhookData.success) {
         setWebhookSecret(webhookData.webhookSecret);
+      }
+
+      if (envData.repository) {
+        setRepositoryUrl(envData.repository);
       }
 
       setConfig({
@@ -258,7 +368,7 @@ export default function TeamDetailsPage() {
 
   const handleUpdateBranch = async () => {
     if (!newBranch.trim()) {
-      addToast('Please enter a branch name', 'error');
+      addToast('Seleziona un branch dal repository', 'error');
       return;
     }
 
@@ -306,6 +416,134 @@ export default function TeamDetailsPage() {
     }
   };
 
+  const fetchDeployLogs = async () => {
+    setDeployLogsLoading(true);
+    setDeployLogsError('');
+    try {
+      const response = await fetch(`/api/teams/${teamName}/deploy-logs?tail=300`);
+      const data = await response.json();
+      if (data.success) {
+        setDeployLogsText(data.logs || '');
+      } else {
+        setDeployLogsError(data.message || 'Failed to load deploy logs');
+      }
+    } catch (err) {
+      setDeployLogsError('Failed to load deploy logs');
+      console.error(err);
+    } finally {
+      setDeployLogsLoading(false);
+      if (deployLogsRef.current && deployLogsAutoScroll) {
+        deployLogsRef.current.scrollTop = deployLogsRef.current.scrollHeight;
+      }
+    }
+  };
+
+  const handleOpenDeployLogs = () => {
+    setDeployLogsOpen(true);
+    fetchDeployLogs();
+    if (deployLogsIntervalRef.current) {
+      clearInterval(deployLogsIntervalRef.current);
+    }
+    deployLogsIntervalRef.current = setInterval(fetchDeployLogs, 2000);
+  };
+
+  const handleCloseDeployLogs = () => {
+    setDeployLogsOpen(false);
+    if (deployLogsIntervalRef.current) {
+      clearInterval(deployLogsIntervalRef.current);
+      deployLogsIntervalRef.current = null;
+    }
+  };
+
+  const handleDeleteTeam = async () => {
+    const normalizedInput = deleteInput.trim().toLowerCase();
+    const normalizedTeam = teamName.toLowerCase();
+    if (!normalizedInput || normalizedInput !== normalizedTeam) {
+      addToast('Il nome inserito non corrisponde al team', 'error');
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const response = await fetch(`/api/teams/${teamName}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmName: deleteInput.trim() }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        addToast('Team eliminato con successo', 'success');
+        setDeleteOpen(false);
+        setDeleteInput('');
+        router.push('/dashboard/teams');
+      } else {
+        addToast(data.message || 'Eliminazione team fallita', 'error');
+      }
+    } catch (err) {
+      addToast('Eliminazione team fallita', 'error');
+      console.error(err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleBranchRefresh = async () => {
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed || !isGitHubRepoUrl(trimmed)) {
+      setBranchError('Inserisci un link GitHub valido (es. https://github.com/org/repo).');
+      setBranchStatus('error');
+      return;
+    }
+
+    if (branchFetchTimeoutRef.current) {
+      clearTimeout(branchFetchTimeoutRef.current);
+    }
+    branchFetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    branchFetchAbortRef.current = controller;
+
+    setBranchStatus('loading');
+    setBranchError('');
+
+    try {
+      const response = await fetchGitHubBranches(trimmed, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+
+      if (!response.success) {
+        setBranchOptions([]);
+        setBranchStatus('error');
+        setBranchError(response.message || 'Impossibile recuperare i branch dal repository.');
+        setDefaultBranch(null);
+        return;
+      }
+
+      setBranchOptions(response.branches);
+      setDefaultBranch(response.defaultBranch ?? null);
+      setBranchStatus('success');
+
+      if (response.branches.length === 0) {
+        setBranchError('Nessun branch disponibile per questo repository.');
+        return;
+      }
+
+      setBranchError('');
+      if (!branchTouchedRef.current) {
+        const preferred = response.branches.includes(branch)
+          ? branch
+          : response.defaultBranch && response.branches.includes(response.defaultBranch)
+            ? response.defaultBranch
+            : response.branches[0];
+        if (preferred) setNewBranch(preferred);
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') return;
+      setBranchOptions([]);
+      setBranchStatus('error');
+      setBranchError('Errore durante il recupero dei branch dal repository.');
+      setDefaultBranch(null);
+    }
+  };
+
   const handleCopySecret = async () => {
     try {
       await navigator.clipboard.writeText(webhookSecret);
@@ -349,12 +587,13 @@ export default function TeamDetailsPage() {
   }
 
   return (
-    <div className="max-w-4xl">
+    <>
+      <div className="w-full max-w-none">
       {/* Header */}
       <div className="mb-8 flex items-center gap-4">
         <button
           onClick={() => router.back()}
-          className="p-2 hover:bg-slate-100 rounded-lg transition"
+          className="p-2 leading-none hover:bg-slate-100 rounded-lg transition flex items-center justify-center"
         >
           <ChevronLeft size={24} className="text-slate-600" />
         </button>
@@ -392,7 +631,7 @@ export default function TeamDetailsPage() {
                   fetchLogs();
                 }
               }}
-              className="ml-2 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition"
+              className="ml-2 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition leading-none"
             >
               <FileText size={14} />
               Logs
@@ -411,9 +650,9 @@ export default function TeamDetailsPage() {
             <button
               onClick={fetchLogs}
               disabled={logsLoading}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50 leading-none"
             >
-              <RefreshCw size={16} />
+              {logsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
               Refresh
             </button>
           </div>
@@ -429,81 +668,76 @@ export default function TeamDetailsPage() {
         </div>
       )}
 
-      {/* Branch Configuration */}
+      {/* Deploy Section */}
       <div className="mb-8 bg-white rounded-lg shadow-md p-6">
         <h2 className="text-xl font-semibold text-slate-900 mb-4 flex items-center gap-2">
-          <GitBranch size={20} className="text-cyan-500" />
-          Current Branch
+          <DownloadCloud size={20} className="text-emerald-500" />
+          Deploy
         </h2>
-        <div className="mb-6">
-          <div className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg">
-            <span className="font-mono text-slate-900">{branch}</span>
-          </div>
-        </div>
-        <div className="flex gap-4 items-end">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              New Branch Name
-            </label>
-            <input
-              type="text"
-              value={newBranch}
-              onChange={(e) => setNewBranch(e.target.value)}
-              placeholder="e.g., main, develop, feature/new-ui"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900"
-            />
-          </div>
+        <p className="text-slate-600 mb-4">
+          Trigger a new deployment of this team using the current configuration
+        </p>
+        <div className="flex flex-wrap gap-3">
           <button
-            onClick={handleUpdateBranch}
-            disabled={saving}
-            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
+            onClick={handleDeploy}
+            disabled={deploying}
+            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition disabled:opacity-50 font-medium flex items-center gap-2 leading-none"
           >
-            Update Branch
+            {deploying ? <Loader2 size={18} className="animate-spin" /> : <DownloadCloud size={18} />}
+            {deploying ? 'Deploying...' : 'Deploy Now'}
+          </button>
+          <button
+            onClick={handleOpenDeployLogs}
+            className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium flex items-center gap-2 leading-none"
+          >
+            <Terminal size={18} />
+            Output deploy
           </button>
         </div>
       </div>
 
-      {/* Webhook Secret Configuration */}
+      {/* Branch Configuration */}
       <div className="mb-8 bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-xl font-semibold text-slate-900 mb-4 flex items-center gap-2">
-          <Cog size={20} className="text-blue-500" />
-          Webhook Secret
-        </h2>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Secret Key
-            </label>
-            <div className="flex gap-2">
-              <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg">
-                <span className="font-mono text-slate-900 flex-1 truncate">
-                  {showWebhookSecret ? webhookSecret : '••••••••••••••••••••••••••••••••'}
-                </span>
-                <button
-                  onClick={() => setShowWebhookSecret(!showWebhookSecret)}
-                  className="text-slate-600 hover:text-slate-900 transition"
-                >
-                  {showWebhookSecret ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-              <button
-                onClick={handleCopySecret}
-                className="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg transition flex items-center gap-2"
-              >
-                <Copy size={18} />
-              </button>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Use this secret to verify webhook requests from your CI/CD pipeline
-            </p>
-          </div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold text-slate-900 flex items-center gap-2 leading-none">
+            <GitBranch size={20} className="text-cyan-500 shrink-0 overflow-visible" />
+            Current Branch
+          </h2>
           <button
-            onClick={handleRegenerateSecret}
-            disabled={regeneratingSecret}
-            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition disabled:opacity-50 font-medium flex items-center gap-2"
+            onClick={handleBranchRefresh}
+            disabled={branchStatus === 'loading' || !repositoryUrl}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50 leading-none"
           >
-            <RotateCw size={18} />
-            Regenerate Secret
+            {branchStatus === 'loading' ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+            Aggiorna lista
+          </button>
+        </div>
+        <div className="flex flex-col gap-4">
+          <BranchSelector
+            branch={newBranch}
+            branches={branchOptions}
+            defaultBranch={defaultBranch}
+            loading={branchStatus === 'loading'}
+            error={branchError}
+            disabled={saving}
+            placeholderLabel={branchStatus === 'loading'
+              ? 'Scansione branch in corso...'
+              : 'Seleziona un branch dal repository'}
+            onBranchChange={(value) => {
+              branchTouchedRef.current = true;
+              setNewBranch(value);
+            }}
+            onTouched={() => {
+              branchTouchedRef.current = true;
+            }}
+          />
+          <button
+            onClick={handleUpdateBranch}
+            disabled={saving || !newBranch || newBranch === branch || branchOptions.length === 0}
+            className="self-start inline-flex items-center px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
+          >
+            {saving && <Loader2 size={16} className="mr-2 animate-spin" />}
+            {saving ? 'Updating...' : 'Update Branch'}
           </button>
         </div>
       </div>
@@ -516,6 +750,15 @@ export default function TeamDetailsPage() {
             Environment Variables
           </h2>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowEnvValues((prev) => !prev)}
+              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded text-sm text-slate-700 flex items-center gap-2"
+              title="Toggle env values visibility"
+            >
+              {showEnvValues ? <EyeOff size={16} /> : <Eye size={16} />}
+              {showEnvValues ? 'Hide' : 'Show'} Values
+            </button>
             <input
               ref={envFileInputRef}
               type="file"
@@ -525,7 +768,7 @@ export default function TeamDetailsPage() {
             <button
               type="button"
               onClick={() => setEnvUploadOpen(true)}
-              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded text-sm text-slate-700 flex items-center gap-2"
+              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded text-sm text-slate-700 flex items-center gap-2 leading-none"
               title="Upload .env file (will merge into editor, not saved to server)"
             >
               <DownloadCloud size={16} />
@@ -541,7 +784,7 @@ export default function TeamDetailsPage() {
                 <button
                   type="button"
                   onClick={() => setEnvUploadOpen(false)}
-                  className="text-slate-600 hover:text-slate-900"
+                  className="text-slate-600 hover:text-slate-900 leading-none flex items-center justify-center"
                 >
                   ✕
                 </button>
@@ -572,7 +815,7 @@ export default function TeamDetailsPage() {
                   <button
                     type="button"
                     onClick={handleEnvUploadClick}
-                    className="mt-3 rounded bg-slate-100 px-3 py-2 text-sm text-slate-700 hover:bg-slate-200"
+                    className="mt-3 rounded bg-slate-100 px-3 py-2 text-sm text-slate-700 hover:bg-slate-200 leading-none"
                   >
                     Sfoglia file
                   </button>
@@ -599,20 +842,21 @@ export default function TeamDetailsPage() {
                 disabled={saving}
               />
               <input
-                type="text"
-                value={env.value}
+                type={showEnvValues ? 'text' : 'password'}
+                value={showEnvValues ? env.value : '••••••••'}
                 onChange={(e) =>
                   handleEnvVarChange(index, 'value', e.target.value)
                 }
                 className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
                 placeholder="value"
                 disabled={saving}
+                readOnly={!showEnvValues}
               />
               {envVariables.length > 1 && (
                 <button
                   type="button"
                   onClick={() => handleRemoveEnvVar(index)}
-                  className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                  className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition leading-none flex items-center justify-center"
                   disabled={saving}
                 >
                   <X size={18} />
@@ -624,7 +868,7 @@ export default function TeamDetailsPage() {
         <button
           type="button"
           onClick={handleAddEnvVar}
-          className="mt-2 flex items-center gap-2 text-blue-600 hover:text-blue-700 text-sm font-medium"
+          className="mt-2 flex items-center gap-2 text-blue-600 hover:text-blue-700 text-sm font-medium leading-none"
           disabled={saving}
         >
           <Plus size={16} />
@@ -633,30 +877,180 @@ export default function TeamDetailsPage() {
         <button
           onClick={handleSaveEnv}
           disabled={saving}
-          className="mt-4 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
+          className="mt-4 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition disabled:opacity-50 font-medium leading-none"
         >
-          Save Environment Variables
+          {saving && <Loader2 size={16} className="mr-2 animate-spin" />}
+          {saving ? 'Saving...' : 'Save Environment Variables'}
         </button>
       </div>
 
-      {/* Deploy Section */}
-      <div className="bg-white rounded-lg shadow-md p-6">
+      {/* Webhook Secret Configuration */}
+      <div className="mb-8 bg-white rounded-lg shadow-md p-6">
         <h2 className="text-xl font-semibold text-slate-900 mb-4 flex items-center gap-2">
-          <DownloadCloud size={20} className="text-emerald-500" />
-          Deploy
+          <Cog size={20} className="text-blue-500" />
+          Webhook Secret
         </h2>
-        <p className="text-slate-600 mb-4">
-          Trigger a new deployment of this team using the current configuration
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Secret Key
+            </label>
+            <div className="flex gap-2">
+              <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg">
+                <span className="font-mono text-slate-900 flex-1 truncate">
+                  {showWebhookSecret ? webhookSecret : '••••••••••••••••••••••••••••••••'}
+                </span>
+                <button
+                  onClick={() => setShowWebhookSecret(!showWebhookSecret)}
+                  className="text-slate-600 hover:text-slate-900 transition flex items-center justify-center leading-none"
+                >
+                  {showWebhookSecret ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+              <button
+                onClick={handleCopySecret}
+                className="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg transition flex items-center gap-2 leading-none"
+              >
+                <Copy size={18} />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Use this secret to verify webhook requests from your CI/CD pipeline
+            </p>
+          </div>
+          <button
+            onClick={handleRegenerateSecret}
+            disabled={regeneratingSecret}
+            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition disabled:opacity-50 font-medium flex items-center gap-2 leading-none"
+          >
+            {regeneratingSecret ? <Loader2 size={18} className="animate-spin" /> : <RotateCw size={18} />}
+            {regeneratingSecret ? 'Regenerating...' : 'Regenerate Secret'}
+          </button>
+        </div>
+      </div>
+
+      {/* Delete Team */}
+      <div className="bg-white rounded-lg shadow-md p-6 border border-red-200">
+        <h2 className="text-xl font-semibold text-slate-900 mb-2 flex items-center gap-2">
+          <X size={20} className="text-red-500" />
+          Elimina Team
+        </h2>
+        <p className="text-sm text-slate-600 mb-4">
+          Questa operazione elimina definitivamente il progetto, inclusi la cartella, la configurazione Caddy e i webhook.
         </p>
         <button
-          onClick={handleDeploy}
-          disabled={deploying}
-          className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition disabled:opacity-50 font-medium flex items-center gap-2"
+          onClick={() => setDeleteOpen(true)}
+          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-medium"
         >
-          <DownloadCloud size={18} />
-          Deploy Now
+          Elimina team
         </button>
       </div>
     </div>
+
+    {deleteOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <h3 className="text-lg font-semibold text-slate-900">Conferma eliminazione</h3>
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteOpen(false);
+                setDeleteInput('');
+              }}
+              className="text-slate-600 hover:text-slate-900"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="p-4 space-y-4">
+            <p className="text-sm text-slate-700">
+              Digita <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">{teamName}</span> per confermare la cancellazione definitiva.
+            </p>
+            <input
+              type="text"
+              value={deleteInput}
+              onChange={(e) => setDeleteInput(e.target.value)}
+              placeholder="Nome progetto"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-slate-900"
+              disabled={deleting}
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteOpen(false);
+                  setDeleteInput('');
+                }}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-100 transition"
+                disabled={deleting}
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteTeam}
+                disabled={deleting || deleteInput.trim().toLowerCase() !== teamName.toLowerCase()}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
+              >
+                {deleting && <Loader2 size={16} className="mr-2 animate-spin" />}
+                {deleting ? 'Eliminazione...' : 'Elimina definitivamente'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+      {deployLogsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-3xl rounded-lg bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <h3 className="text-lg font-semibold text-slate-900">Output deploy</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={fetchDeployLogs}
+                  disabled={deployLogsLoading}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50 leading-none"
+                >
+                  {deployLogsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                  Aggiorna
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloseDeployLogs}
+                  className="text-slate-600 hover:text-slate-900"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="p-4">
+              {deployLogsError && (
+                <div className="mb-3 text-sm text-red-600">{deployLogsError}</div>
+              )}
+              <div
+                ref={deployLogsRef}
+                onScroll={() => {
+                  const el = deployLogsRef.current;
+                  if (!el) return;
+                  const threshold = 24;
+                  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+                  setDeployLogsAutoScroll(atBottom);
+                }}
+                className="border border-slate-200 rounded-lg bg-slate-900 text-slate-100 text-xs font-mono p-4 h-72 overflow-auto whitespace-pre-wrap break-all"
+              >
+                {deployLogsLoading && !deployLogsText
+                  ? 'Loading deploy logs...'
+                  : deployLogsText || 'Nessun log disponibile.'}
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Aggiornamento automatico ogni 2s. Lo scroll resta fermo se sei lontano dal fondo.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

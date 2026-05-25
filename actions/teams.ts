@@ -19,6 +19,7 @@ import {
   executeCommand,
   resolveGitBranch,
 } from '@/lib/server';
+import { adjustPathForTesting } from '@/lib/env';
 import {
   generateCaddyConfig,
   generateDeployScript,
@@ -29,6 +30,7 @@ import {
   extractPortFromDockerCompose,
 } from '@/lib/templates';
 import * as path from 'path';
+import { promises as fs } from 'fs';
 import { fileExists } from '@/lib/server';
 import {
   EnvEntry,
@@ -41,7 +43,9 @@ import {
 
 const APPS_DIR = process.env.APPS_BASE_DIR || '/opt/apps';
 const CADDY_CONF_DIR = process.env.CADDY_CONF_DIR || path.join(APPS_DIR, 'caddy', 'conf.d');
+const CADDY_LOGS_DIR = process.env.CADDY_LOGS_DIR || path.join(APPS_DIR, 'caddy', 'logs');
 const WEBHOOK_SCRIPTS_DIR = process.env.WEBHOOK_SCRIPTS_DIR || path.join(APPS_DIR, 'webhook', 'scripts');
+const WEBHOOK_LOGS_DIR = process.env.WEBHOOK_LOGS_DIR || path.join(APPS_DIR, 'webhook', 'logs');
 const HOOKS_JSON_PATH = process.env.WEBHOOK_HOOKS_FILE || path.join(APPS_DIR, 'webhook', 'hooks.json');
 
 export interface CreateTeamInput {
@@ -71,6 +75,17 @@ const MAX_RANDOM_PORT = 60000;
 
 function generateRandomHostPort(): number {
   return Math.floor(Math.random() * (MAX_RANDOM_PORT - MIN_RANDOM_PORT + 1)) + MIN_RANDOM_PORT;
+}
+
+async function removePath(targetPath: string): Promise<void> {
+  const adjustedPath = adjustPathForTesting(targetPath);
+  try {
+    await fs.rm(adjustedPath, { recursive: true, force: true });
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
 }
 
 export async function getTeams(): Promise<TeamInfo[]> {
@@ -283,6 +298,39 @@ async function ensureTeamConfig(teamName: string, teamDir: string): Promise<Team
   return teamConfig;
 }
 
+async function findRepositoryUrl(teamDir: string): Promise<string> {
+  try {
+    const { stdout } = await executeCommand(`cd "${teamDir}" && git remote get-url origin`);
+    const repo = stdout.trim();
+    if (repo) return repo;
+  } catch {
+    // ignore
+  }
+
+  try {
+    const configPath = path.join(teamDir, '.git', 'config');
+    if (!(await fileExists(configPath))) return '';
+    const configContent = await readFile(configPath);
+    const lines = configContent.split('\n');
+    let inOrigin = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('[')) {
+        inOrigin = trimmed.toLowerCase() === '[remote "origin"]';
+        continue;
+      }
+      if (inOrigin && trimmed.toLowerCase().startsWith('url =')) {
+        const value = trimmed.split('=')[1]?.trim();
+        if (value) return value;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return '';
+}
+
 async function getActualHostPort(teamDir: string, teamName: string): Promise<number | null> {
   try {
     const composeCmds = [
@@ -388,6 +436,7 @@ export async function getTeamConfig(teamName: string): Promise<TeamConfig | null
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+    const teamConfigPath = path.join(teamDir, 'team.config.json');
     const teamConfig = await ensureTeamConfig(sanitizedTeamName, teamDir);
 
     const envPath = path.join(teamDir, '.env');
@@ -399,6 +448,15 @@ export async function getTeamConfig(teamName: string): Promise<TeamConfig | null
     const parsed = parseEnvContent(envContent);
     const env = entriesToRecord(parsed.entries);
 
+    let repositoryUrl = teamConfig.repositoryUrl || '';
+    if (!repositoryUrl) {
+      repositoryUrl = await findRepositoryUrl(teamDir);
+      if (repositoryUrl) {
+        teamConfig.repositoryUrl = repositoryUrl;
+        await writeJSON(teamConfigPath, teamConfig);
+      }
+    }
+
     const hooks = await readJSON<any[]>(HOOKS_JSON_PATH);
     const teamHook = hooks.find(h => h.id === sanitizedTeamName);
     const branch = teamHook?.['match-branch'] || teamConfig.branch || 'main';
@@ -406,7 +464,7 @@ export async function getTeamConfig(teamName: string): Promise<TeamConfig | null
     return {
       name: sanitizedTeamName,
       domain: teamConfig.domain,
-      repository: teamConfig.repositoryUrl || 'unknown',
+  repository: repositoryUrl,
       branch,
       env,
       envEntries: parsed.entries,
@@ -458,6 +516,18 @@ export async function manualDeployTeam(teamName: string): Promise<{ success: boo
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const teamDir = path.join(APPS_DIR, sanitizedTeamName);
 
+    const teamConfig = await getTeamConfig(sanitizedTeamName);
+    const branch = teamConfig?.branch || 'main';
+    const serviceName = await detectComposeServiceName(teamDir).catch(() => 'app');
+    const containerPort = await detectComposeTargetPort(teamDir).catch(() => 0);
+    const logFile = path.join(APPS_DIR, 'webhook', 'logs', `deploy-${sanitizedTeamName}.log`);
+    await createDirectory(WEBHOOK_SCRIPTS_DIR);
+    await createDirectory(path.dirname(logFile));
+    const deployScript = generateDeployScript(sanitizedTeamName, branch, teamDir, logFile, serviceName, containerPort);
+    const scriptPath = path.join(WEBHOOK_SCRIPTS_DIR, `deploy-${sanitizedTeamName}.sh`);
+    await writeFile(scriptPath, deployScript);
+    await chmod(scriptPath, 0o755);
+
     await deployTeam(teamDir, sanitizedTeamName);
 
     return {
@@ -485,12 +555,7 @@ export async function updateTeamBranch(
     const config = await readJSON<TeamConfigFile>(configPath);
     let repositoryUrl = config.repositoryUrl || '';
     if (!repositoryUrl) {
-      try {
-        const { stdout } = await executeCommand(`cd "${teamDir}" && git remote get-url origin`);
-        repositoryUrl = stdout.trim();
-      } catch {
-        repositoryUrl = '';
-      }
+      repositoryUrl = await findRepositoryUrl(teamDir);
     }
     if (!repositoryUrl) {
       return {
@@ -535,6 +600,68 @@ export async function updateTeamBranch(
   } catch (error) {
     console.error('Failed to update team branch:', error);
     const message = error instanceof Error ? error.message : 'Failed to update branch';
+    return { success: false, message };
+  }
+}
+
+export async function deleteTeam(
+  teamName: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+
+    if (!(await fileExists(teamDir))) {
+      return { success: false, message: `Team '${sanitizedTeamName}' not found.` };
+    }
+
+    const composeCandidates = [
+      'docker-compose.yml',
+      'docker-compose.yaml',
+      'docker-compose.runtime.yml',
+    ];
+    let composeFile: string | null = null;
+    for (const candidate of composeCandidates) {
+      const fullPath = path.join(teamDir, candidate);
+      if (await fileExists(fullPath)) {
+        composeFile = fullPath;
+        break;
+      }
+    }
+
+    if (composeFile) {
+      const overridePath = path.join(teamDir, 'docker-compose.override.yml');
+      const composeFlags = [
+        `-f "${composeFile}"`,
+        (await fileExists(overridePath)) ? `-f "${overridePath}"` : null,
+      ].filter(Boolean).join(' ');
+      await executeCommand(
+        `cd "${teamDir}" && docker compose ${composeFlags} down --remove-orphans`
+      );
+    }
+
+    const hooks = await readJSON<any[]>(HOOKS_JSON_PATH, []);
+    const updatedHooks = hooks.filter((hook) => hook.id !== sanitizedTeamName);
+    if (updatedHooks.length !== hooks.length) {
+      await writeJSON(HOOKS_JSON_PATH, updatedHooks);
+    }
+
+    await removePath(path.join(WEBHOOK_SCRIPTS_DIR, `deploy-${sanitizedTeamName}.sh`));
+    await removePath(path.join(WEBHOOK_LOGS_DIR, `deploy-${sanitizedTeamName}.log`));
+    await removePath(path.join(CADDY_CONF_DIR, `${sanitizedTeamName}.conf`));
+    await removePath(path.join(CADDY_LOGS_DIR, `${sanitizedTeamName}.log`));
+    await removePath(teamDir);
+
+    await restartWebhookServer();
+    await reloadCaddy();
+
+    return {
+      success: true,
+      message: `Team '${sanitizedTeamName}' removed successfully.`,
+    };
+  } catch (error) {
+    console.error('Failed to delete team:', error);
+    const message = error instanceof Error ? error.message : 'Failed to delete team';
     return { success: false, message };
   }
 }
