@@ -207,7 +207,8 @@ export function generateDeployScript(
   teamDir: string = `/opt/apps/team-${teamName}`,
   logFile: string = `/var/log/deploy-${teamName}.log`,
   serviceName: string = 'app',
-  containerPort: number = 0
+  containerPort: number = 0,
+  commitSha?: string
 ): string {
   // Build script with proper shell variable syntax
   const script = [
@@ -220,6 +221,7 @@ export function generateDeployScript(
     'OVERRIDE_FILE="$APP_DIR/docker-compose.override.yml"',
     `SERVICE_NAME="${serviceName}"`,
     `CONTAINER_PORT=${containerPort}`,
+  `DEPLOY_COMMIT="${commitSha ?? ''}"`,
     '',
     'echo "[$(date -Iseconds)] === Deploy avviato ===" >> "$LOG_FILE"',
     '',
@@ -292,9 +294,15 @@ export function generateDeployScript(
     'fi',
     '',
   'cd "$APP_DIR"',
-  `git fetch origin ${branchName} >> "$LOG_FILE" 2>&1`,
-  `git checkout -B ${branchName} origin/${branchName} >> "$LOG_FILE" 2>&1`,
-  `git pull origin ${branchName} >> "$LOG_FILE" 2>&1`,
+  'if [ -n "$DEPLOY_COMMIT" ]; then',
+  '  echo "[$(date -Iseconds)] Deploy commit $DEPLOY_COMMIT" >> "$LOG_FILE"',
+  `  git fetch origin ${branchName} >> "$LOG_FILE" 2>&1 || git fetch --all >> "$LOG_FILE" 2>&1`,
+  '  git checkout "$DEPLOY_COMMIT" >> "$LOG_FILE" 2>&1',
+  'else',
+  `  git fetch origin ${branchName} >> "$LOG_FILE" 2>&1`,
+  `  git checkout -B ${branchName} origin/${branchName} >> "$LOG_FILE" 2>&1`,
+  `  git pull origin ${branchName} >> "$LOG_FILE" 2>&1`,
+  'fi',
     '',
   'RUNTIME_COMPOSE_FILE="$APP_DIR/docker-compose.runtime.yml"',
   'if [ -f "$APP_DIR/docker-compose.yml" ]; then',

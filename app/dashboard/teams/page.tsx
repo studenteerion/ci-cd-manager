@@ -20,7 +20,6 @@ export default function TeamsPage() {
   const [systemLogsAutoScroll, setSystemLogsAutoScroll] = useState(true);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [teamSearch, setTeamSearch] = useState('');
 
   useEffect(() => {
     const fetchTeams = async () => {
@@ -217,33 +216,13 @@ export default function TeamsPage() {
 
       {/* Teams List */}
       <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
-          <h2 className="text-2xl font-bold text-slate-900">
-            Teams ({teams.length})
-          </h2>
-          <div className="w-full md:w-72">
-            <label htmlFor="team-search" className="sr-only">
-              Cerca team
-            </label>
-            <input
-              id="team-search"
-              type="search"
-              value={teamSearch}
-              onChange={(event) => setTeamSearch(event.target.value)}
-              placeholder="Cerca team per nome"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
-            />
-          </div>
-        </div>
+        <h2 className="text-2xl font-bold text-slate-900 mb-6">
+          Teams ({teams.length})
+        </h2>
         {loading ? (
           <div className="text-center text-slate-600">Loading teams...</div>
         ) : (
-          <TeamList
-            teams={teams}
-            refreshKey={refreshKey}
-            onTeamSelect={handleTeamSelect}
-            filterText={teamSearch}
-          />
+          <TeamList teams={teams} refreshKey={refreshKey} onTeamSelect={handleTeamSelect} />
         )}
       </div>
 

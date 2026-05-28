@@ -11,6 +11,18 @@ export interface GitHubBranchLookup {
   rateLimit: GitHubRateLimit;
 }
 
+export interface GitHubCommitInfo {
+  sha: string;
+  message: string;
+  author?: string;
+  date?: string;
+}
+
+export interface GitHubCommitLookup {
+  commits: GitHubCommitInfo[];
+  rateLimit: GitHubRateLimit;
+}
+
 export class GitHubApiError extends Error {
   status: number;
   rateLimit: GitHubRateLimit;
@@ -97,4 +109,58 @@ export async function fetchGitHubBranches(repoUrl: string): Promise<GitHubBranch
     defaultBranch: repoPayload.default_branch,
     rateLimit: branchRateLimit,
   };
+}
+
+export async function fetchGitHubCommits(
+  repoUrl: string,
+  branch: string,
+  limit = 20
+): Promise<GitHubCommitLookup> {
+  const repoInfo = parseGitHubRepoUrl(repoUrl);
+  if (!repoInfo) {
+    throw new GitHubApiError('Repository URL is not a valid GitHub URL.', 400, {
+      remaining: null,
+      reset: null,
+    });
+  }
+  if (!branch) {
+    throw new GitHubApiError('Branch name is required to fetch commits.', 400, {
+      remaining: null,
+      reset: null,
+    });
+  }
+
+  const { owner, repo } = repoInfo;
+  const headers = buildHeaders();
+  const perPage = Math.min(Math.max(limit, 1), 50);
+
+  const commitsResponse = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(branch)}&per_page=${perPage}`,
+    { headers, cache: 'no-store' }
+  );
+  const commitsRateLimit = parseRateLimit(commitsResponse.headers);
+  if (!commitsResponse.ok) {
+    const commitsText = await commitsResponse.text();
+    throw normalizeGitHubError(commitsResponse.status, commitsText, commitsRateLimit);
+  }
+
+  const commitPayload = (await commitsResponse.json()) as Array<{
+    sha: string;
+    commit?: {
+      message?: string;
+      author?: {
+        name?: string;
+        date?: string;
+      };
+    };
+  }>;
+
+  const commits = commitPayload.map((item) => ({
+    sha: item.sha,
+    message: (item.commit?.message || '').split('\n')[0].trim(),
+    author: item.commit?.author?.name,
+    date: item.commit?.author?.date,
+  }));
+
+  return { commits, rateLimit: commitsRateLimit };
 }

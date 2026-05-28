@@ -511,19 +511,31 @@ export async function updateTeamEnv(
   }
 }
 
-export async function manualDeployTeam(teamName: string): Promise<{ success: boolean; message: string }> {
+export async function manualDeployTeam(
+  teamName: string,
+  commitSha?: string,
+  branchOverride?: string
+): Promise<{ success: boolean; message: string }> {
   try {
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const teamDir = path.join(APPS_DIR, sanitizedTeamName);
 
     const teamConfig = await getTeamConfig(sanitizedTeamName);
-    const branch = teamConfig?.branch || 'main';
+    const branch = branchOverride?.trim() || teamConfig?.branch || 'main';
     const serviceName = await detectComposeServiceName(teamDir).catch(() => 'app');
     const containerPort = await detectComposeTargetPort(teamDir).catch(() => 0);
     const logFile = path.join(APPS_DIR, 'webhook', 'logs', `deploy-${sanitizedTeamName}.log`);
     await createDirectory(WEBHOOK_SCRIPTS_DIR);
     await createDirectory(path.dirname(logFile));
-    const deployScript = generateDeployScript(sanitizedTeamName, branch, teamDir, logFile, serviceName, containerPort);
+    const deployScript = generateDeployScript(
+      sanitizedTeamName,
+      branch,
+      teamDir,
+      logFile,
+      serviceName,
+      containerPort,
+      commitSha
+    );
     const scriptPath = path.join(WEBHOOK_SCRIPTS_DIR, `deploy-${sanitizedTeamName}.sh`);
     await writeFile(scriptPath, deployScript);
     await chmod(scriptPath, 0o755);

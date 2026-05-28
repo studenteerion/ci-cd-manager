@@ -1,11 +1,11 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw, Loader2, Terminal } from 'lucide-react';
 import { useToast } from '@/lib/context/ToastContext';
 import { BranchSelector } from '@/components/BranchSelector';
-import { fetchGitHubBranches, isGitHubRepoUrl } from '@/lib/github/client';
+import { fetchGitHubBranches, fetchGitHubCommits, isGitHubRepoUrl, CommitInfo } from '@/lib/github/client';
 import {
   EnvEntry,
   mergeEnvEntries,
@@ -64,6 +64,14 @@ export default function TeamDetailsPage() {
   const deployLogsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [deployLogsAutoScroll, setDeployLogsAutoScroll] = useState(true);
   const deployLogsAutoScrollRef = useRef(true);
+  const [commitModalOpen, setCommitModalOpen] = useState(false);
+  const [commitOptions, setCommitOptions] = useState<CommitInfo[]>([]);
+  const [commitLoading, setCommitLoading] = useState(false);
+  const [commitError, setCommitError] = useState('');
+  const [selectedCommit, setSelectedCommit] = useState<CommitInfo | null>(null);
+  const [commitSearchTerm, setCommitSearchTerm] = useState('');
+  const [commitBranchOverride, setCommitBranchOverride] = useState('');
+  const [deployingCommit, setDeployingCommit] = useState(false);
   const [envVariables, setEnvVariables] = useState<EnvVariable[]>([
     { key: '', value: '' },
   ]);
@@ -79,6 +87,8 @@ export default function TeamDetailsPage() {
   const branchFetchAbortRef = useRef<AbortController | null>(null);
   const branchFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchTouchedRef = useRef(false);
+  const commitDefaultBranch = branch || defaultBranch || 'main';
+  const commitSelectedBranch = commitBranchOverride.trim() || commitDefaultBranch;
 
   useEffect(() => {
     loadTeamConfig();
@@ -421,6 +431,94 @@ export default function TeamDetailsPage() {
     }
   };
 
+  const fetchCommitOptions = async () => {
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed) {
+      setCommitError('Repository non configurato per questo team.');
+      setCommitOptions([]);
+      return;
+    }
+    if (!isGitHubRepoUrl(trimmed)) {
+      setCommitError('Inserisci un link GitHub valido (es. https://github.com/org/repo).');
+      setCommitOptions([]);
+      return;
+    }
+
+    setCommitLoading(true);
+    setCommitError('');
+    try {
+      const response = await fetchGitHubCommits(trimmed, commitSelectedBranch);
+      if (!response.success) {
+        setCommitError(response.message || 'Impossibile recuperare i commit.');
+        setCommitOptions([]);
+        return;
+      }
+      setCommitOptions(response.commits || []);
+      setSelectedCommit(response.commits?.[0] ?? null);
+    } catch (err) {
+      setCommitError('Errore durante il recupero dei commit.');
+      console.error(err);
+    } finally {
+      setCommitLoading(false);
+    }
+  };
+
+  const handleOpenCommitDeploy = () => {
+    setCommitModalOpen(true);
+    setCommitSearchTerm('');
+    setCommitBranchOverride('');
+    fetchCommitOptions();
+  };
+
+  const filteredCommitOptions = useMemo(() => {
+    const normalized = commitSearchTerm.trim().toLowerCase();
+    if (!normalized) return commitOptions;
+    return commitOptions.filter((commit) => {
+      const shaMatch = commit.sha.toLowerCase().includes(normalized);
+      const messageMatch = (commit.message || '').toLowerCase().includes(normalized);
+      return shaMatch || messageMatch;
+    });
+  }, [commitOptions, commitSearchTerm]);
+
+  useEffect(() => {
+    if (!commitModalOpen) return;
+    setSelectedCommit(null);
+    setCommitSearchTerm('');
+  }, [commitSelectedBranch, commitModalOpen]);
+
+  const handleDeployCommit = async () => {
+    if (!selectedCommit) {
+      addToast('Seleziona un commit da deployare', 'error');
+      return;
+    }
+
+    const branchOverride = commitBranchOverride.trim();
+
+    setDeployingCommit(true);
+    try {
+      const response = await fetch(`/api/teams/${teamName}/deploy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commit: selectedCommit.sha,
+          branch: branchOverride || undefined,
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        addToast('Deployment del commit avviato', 'success');
+        setCommitModalOpen(false);
+      } else {
+        addToast(data.message || 'Deploy del commit fallito', 'error');
+      }
+    } catch (err) {
+      addToast('Deploy del commit fallito', 'error');
+      console.error(err);
+    } finally {
+      setDeployingCommit(false);
+    }
+  };
+
   const fetchDeployLogs = async () => {
     setDeployLogsLoading(true);
     setDeployLogsError('');
@@ -611,7 +709,7 @@ export default function TeamDetailsPage() {
       <div className="mb-8 flex items-center gap-4">
         <button
           onClick={() => router.push('/dashboard/teams')}
-          className="p-2 leading-none hover:bg-slate-100 rounded-lg transition flex items-center justify-center"
+          className="h-10 w-10 leading-none rounded-lg border border-slate-200 bg-white hover:bg-slate-100 shadow-sm transition flex items-center justify-center"
           aria-label="Torna all'elenco team"
         >
           <ChevronLeft size={24} className="text-slate-600" />
@@ -704,6 +802,13 @@ export default function TeamDetailsPage() {
           >
             {deploying ? <Loader2 size={18} className="animate-spin" /> : <DownloadCloud size={18} />}
             {deploying ? 'Deploying...' : 'Deploy Now'}
+          </button>
+          <button
+            onClick={handleOpenCommitDeploy}
+            className="px-4 py-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg transition font-medium flex items-center gap-2 leading-none"
+          >
+            <GitBranch size={18} />
+            Deploy commit
           </button>
           <button
             onClick={handleOpenDeployLogs}
@@ -929,7 +1034,7 @@ export default function TeamDetailsPage() {
               </button>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Questo URL verrà usato dai webhook: {`{base}/hooks/{team}`}
+              Questo URL verrà usato dai webhook
             </p>
           </div>
           <div>
@@ -1043,11 +1148,146 @@ export default function TeamDetailsPage() {
       </div>
     )}
 
+    {commitModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-2xl rounded-lg bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <h3 className="text-lg font-semibold text-slate-900">Deploy commit specifico</h3>
+            <button
+              type="button"
+              onClick={() => {
+                setCommitModalOpen(false);
+                setSelectedCommit(null);
+                setCommitSearchTerm('');
+                setCommitBranchOverride('');
+              }}
+              className="text-slate-600 hover:text-slate-900"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-slate-600" htmlFor="commit-branch-select">
+                  Branch per il deploy
+                </label>
+                <select
+                  id="commit-branch-select"
+                  value={commitBranchOverride.trim() || commitDefaultBranch}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setCommitBranchOverride(value === commitDefaultBranch ? '' : value);
+                  }}
+                  className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value={commitDefaultBranch}>
+                    {commitDefaultBranch} (predefinito)
+                  </option>
+                  {branchOptions
+                    .filter((option) => option !== commitDefaultBranch)
+                    .map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <button
+                onClick={fetchCommitOptions}
+                disabled={commitLoading}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50 leading-none"
+              >
+                {commitLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                Aggiorna
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Il branch selezionato vale solo per questo deploy manuale e non modifica la configurazione del team.
+            </p>
+            {commitError && (
+              <div className="text-sm text-red-600">{commitError}</div>
+            )}
+            <input
+              type="text"
+              value={commitSearchTerm}
+              onChange={(e) => setCommitSearchTerm(e.target.value)}
+              placeholder="Cerca per commit o messaggio..."
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900"
+            />
+            <div className="border border-slate-200 rounded-lg h-64 overflow-auto divide-y divide-slate-100">
+              {commitLoading ? (
+                <div className="p-4 text-sm text-slate-600">Caricamento commit...</div>
+              ) : filteredCommitOptions.length === 0 ? (
+                <div className="p-4 text-sm text-slate-600">Nessun commit trovato.</div>
+              ) : (
+                filteredCommitOptions.map((commit) => {
+                  const isSelected = selectedCommit?.sha === commit.sha;
+                  return (
+                    <button
+                      key={commit.sha}
+                      type="button"
+                      onClick={() => setSelectedCommit(commit)}
+                      className={`w-full text-left px-4 py-3 transition ${
+                        isSelected
+                          ? 'bg-emerald-50 border-l-4 border-emerald-500'
+                          : 'bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-xs text-slate-500">
+                          {commit.sha.slice(0, 7)}
+                        </span>
+                        {commit.date && (
+                          <span className="text-xs text-slate-400">
+                            {new Date(commit.date).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-900">
+                        {commit.message || '(senza messaggio)'}
+                      </div>
+                      {commit.author && (
+                        <div className="mt-1 text-xs text-slate-500">{commit.author}</div>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCommitModalOpen(false);
+                  setSelectedCommit(null);
+                  setCommitSearchTerm('');
+                  setCommitBranchOverride('');
+                }}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-100 transition"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={handleDeployCommit}
+                disabled={!selectedCommit || deployingCommit}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
+              >
+                {deployingCommit && <Loader2 size={16} className="mr-2 animate-spin" />}
+                {deployingCommit ? 'Deploy in corso...' : 'Deploy commit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
       {deployLogsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-3xl rounded-lg bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-              <h3 className="text-lg font-semibold text-slate-900">Output deploy</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Output del deploy</h3>
               <div className="flex items-center gap-2">
                 <button
                   onClick={fetchDeployLogs}
@@ -1083,12 +1323,9 @@ export default function TeamDetailsPage() {
                 className="border border-slate-200 rounded-lg bg-slate-900 text-slate-100 text-xs font-mono p-4 h-72 overflow-auto whitespace-pre-wrap break-all"
               >
                 {deployLogsLoading && !deployLogsText
-                  ? 'Loading deploy logs...'
+                  ? 'Caricamento log del deploy...'
                   : deployLogsText || 'Nessun log disponibile.'}
               </div>
-              <p className="mt-2 text-xs text-slate-500">
-                Aggiornamento automatico ogni 2s. Lo scroll resta fermo se sei lontano dal fondo.
-              </p>
             </div>
           </div>
         </div>
