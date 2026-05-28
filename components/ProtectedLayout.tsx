@@ -1,26 +1,36 @@
 'use client';
 
 import { useEffect, ReactNode, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 
 export function ProtectedLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isChecking, setIsChecking] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    // Check if we have a username cookie (set alongside the httpOnly session cookie)
-    const hasCookie = document.cookie.includes('username=');
+    const cookies = document.cookie.split(';');
+    const userCookie = cookies.find(c => c.trim().startsWith('username='));
+    const roleCookie = cookies.find(c => c.trim().startsWith('role='));
+    const username = userCookie ? decodeURIComponent(userCookie.split('=')[1]) : '';
+    const role = roleCookie ? decodeURIComponent(roleCookie.split('=')[1]) : '';
 
-    if (!hasCookie) {
+    if (!username) {
       // No session, redirect to login
       router.push('/login');
     } else {
+      if (role === 'team') {
+        const allowedPrefix = `/dashboard/teams/${username}`;
+        if (!pathname.startsWith(allowedPrefix)) {
+          router.replace(allowedPrefix);
+        }
+      }
       setIsAuthenticated(true);
     }
     
     setIsChecking(false);
-  }, [router]);
+  }, [router, pathname]);
 
   if (isChecking) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>;

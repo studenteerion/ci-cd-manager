@@ -14,17 +14,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const isValid = await verifyCredentials(normalizedUsername, normalizedPassword);
+    const verification = await verifyCredentials(normalizedUsername, normalizedPassword);
 
-    if (!isValid) {
+    if (!verification.valid) {
+      const message = verification.reason === 'inactive'
+        ? 'Credenziali disattivate'
+        : 'Credenziali non valide';
       return NextResponse.json(
-        { success: false, message: 'Invalid credentials' },
-        { status: 401 }
+        { success: false, message },
+        { status: verification.reason === 'inactive' ? 403 : 401 }
       );
     }
 
     const token = createSessionToken();
-    const response = NextResponse.json({ success: true, message: 'Login successful' });
+    const response = NextResponse.json({
+      success: true,
+      message: 'Login effettuato',
+      role: verification.user?.role,
+      username: verification.user?.username,
+    });
 
     // Set secure session cookie with username
     response.cookies.set({
@@ -43,6 +51,14 @@ export async function POST(request: NextRequest) {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 24 * 60 * 60, // 24 hours
+    });
+
+    response.cookies.set({
+      name: 'role',
+      value: verification.user?.role || 'admin',
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60,
     });
 
     return response;

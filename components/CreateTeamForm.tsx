@@ -273,7 +273,10 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
       const data = await response.json();
 
       if (data.success) {
-        setSuccess(`Team created successfully. Webhook secret: ${data.webhookSecret}`);
+        const passwordInfo = data.teamPassword
+          ? ` Password team: ${data.teamPassword}`
+          : '';
+        setSuccess(`Team creato con successo. Webhook secret: ${data.webhookSecret}.${passwordInfo}`);
         setTeamName('');
         setRepositoryUrl('');
         setDomain('');

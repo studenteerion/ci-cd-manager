@@ -7,6 +7,12 @@ export async function POST(request: NextRequest) {
   if (!authCheck.authenticated) {
     return authCheck.response!;
   }
+  if (authCheck.user?.role !== 'admin') {
+    return NextResponse.json(
+      { success: false, message: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
+  }
 
   try {
     const result = await systemReloadCaddy();

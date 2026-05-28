@@ -20,6 +20,8 @@ export default function TeamsPage() {
   const [systemLogsAutoScroll, setSystemLogsAutoScroll] = useState(true);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [teamSearch, setTeamSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   useEffect(() => {
     const fetchTeams = async () => {
@@ -216,13 +218,42 @@ export default function TeamsPage() {
 
       {/* Teams List */}
       <div className="bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-2xl font-bold text-slate-900 mb-6">
-          Teams ({teams.length})
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <h2 className="text-2xl font-bold text-slate-900">
+            Teams ({teams.length})
+          </h2>
+          <div className="flex flex-wrap gap-3">
+            <input
+              type="text"
+              value={teamSearch}
+              onChange={(e) => setTeamSearch(e.target.value)}
+              placeholder="Cerca per nome, dominio o porta..."
+              className="h-9 w-64 max-w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Tutti gli stati</option>
+              <option value="running">In esecuzione</option>
+              <option value="restarting">In riavvio</option>
+              <option value="stopped">Fermato</option>
+              <option value="exited">Uscito</option>
+              <option value="unknown">Sconosciuto</option>
+            </select>
+          </div>
+        </div>
         {loading ? (
           <div className="text-center text-slate-600">Loading teams...</div>
         ) : (
-          <TeamList teams={teams} refreshKey={refreshKey} onTeamSelect={handleTeamSelect} />
+          <TeamList
+            teams={teams}
+            refreshKey={refreshKey}
+            onTeamSelect={handleTeamSelect}
+            filterText={teamSearch}
+            statusFilter={statusFilter}
+          />
         )}
       </div>
 

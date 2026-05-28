@@ -13,6 +13,12 @@ export async function DELETE(
   if (!authCheck.authenticated) {
     return authCheck.response!;
   }
+  if (authCheck.user?.role !== 'admin') {
+    return NextResponse.json(
+      { success: false, message: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
+  }
 
   const { id } = await params;
   let body: { confirmName?: string } = {};

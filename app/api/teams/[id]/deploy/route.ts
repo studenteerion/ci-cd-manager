@@ -12,6 +12,12 @@ export async function POST(
   }
 
   const { id } = await params;
+  if (authCheck.user?.role === 'team' && authCheck.user.username !== id) {
+    return NextResponse.json(
+      { success: false, message: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
+  }
   try {
     const body = (await request.json().catch(() => ({}))) as {
       commit?: string;

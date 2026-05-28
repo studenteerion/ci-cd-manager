@@ -10,6 +10,7 @@ interface TeamListProps {
   refreshKey: number;
   onTeamSelect?: (teamId: string) => void;
   filterText?: string;
+  statusFilter?: string;
 }
 
 interface TeamWithPort extends TeamInfo {
@@ -18,7 +19,13 @@ interface TeamWithPort extends TeamInfo {
   domain?: string;
 }
 
-export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect, filterText }: TeamListProps) {
+export function TeamList({
+  teams: initialTeams,
+  refreshKey,
+  onTeamSelect,
+  filterText,
+  statusFilter,
+}: TeamListProps) {
   const router = useRouter();
   const [teams, setTeams] = useState<TeamWithPort[]>(initialTeams);
   const [loading, setLoading] = useState(false);
@@ -77,9 +84,20 @@ export function TeamList({ teams: initialTeams, refreshKey, onTeamSelect, filter
   }
 
   const normalizedSearch = (filterText || '').trim().toLowerCase();
-  const filteredTeams = normalizedSearch
-    ? teams.filter((t) => t.name.toLowerCase().includes(normalizedSearch))
-    : teams;
+  const normalizedStatus = (statusFilter || '').trim().toLowerCase();
+  const filteredTeams = teams.filter((team) => {
+    const matchesStatus = normalizedStatus
+      ? (team.status || '').toLowerCase() === normalizedStatus
+      : true;
+    if (!matchesStatus) return false;
+    if (!normalizedSearch) return true;
+    const matchesName = team.name.toLowerCase().includes(normalizedSearch);
+    const matchesDomain = (team.domain || '').toLowerCase().includes(normalizedSearch);
+    const matchesPort = team.hostPort
+      ? team.hostPort.toString().includes(normalizedSearch)
+      : false;
+    return matchesName || matchesDomain || matchesPort;
+  });
 
   return (
     <>

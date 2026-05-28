@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw, Loader2, Terminal } from 'lucide-react';
+import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw, Loader2, Terminal, User } from 'lucide-react';
 import { useToast } from '@/lib/context/ToastContext';
 import { BranchSelector } from '@/components/BranchSelector';
 import { fetchGitHubBranches, fetchGitHubCommits, isGitHubRepoUrl, CommitInfo } from '@/lib/github/client';
@@ -41,6 +41,7 @@ export default function TeamDetailsPage() {
   const [deploying, setDeploying] = useState(false);
   const [containerStatus, setContainerStatus] = useState<string>('');
   const [containerName, setContainerName] = useState<string>('');
+  const [hostPort, setHostPort] = useState<number | null>(null);
   const [branch, setBranch] = useState('main');
   const [newBranch, setNewBranch] = useState('');
   const [repositoryUrl, setRepositoryUrl] = useState('');
@@ -84,6 +85,12 @@ export default function TeamDetailsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteInput, setDeleteInput] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [currentRole, setCurrentRole] = useState<'admin' | 'team' | null>(null);
+  const [teamAccountStatus, setTeamAccountStatus] = useState<'active' | 'inactive'>('active');
+  const [teamPasswordInput, setTeamPasswordInput] = useState('');
+  const [teamGeneratedPassword, setTeamGeneratedPassword] = useState('');
+  const [showGeneratedPassword, setShowGeneratedPassword] = useState(false);
+  const [credentialsLoading, setCredentialsLoading] = useState(false);
   const branchFetchAbortRef = useRef<AbortController | null>(null);
   const branchFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchTouchedRef = useRef(false);
@@ -93,6 +100,36 @@ export default function TeamDetailsPage() {
   useEffect(() => {
     loadTeamConfig();
   }, [teamName]);
+
+  useEffect(() => {
+    const cookies = document.cookie.split(';');
+    const roleCookie = cookies.find((c) => c.trim().startsWith('role='));
+    if (roleCookie) {
+      const roleValue = decodeURIComponent(roleCookie.split('=')[1]);
+      setCurrentRole(roleValue === 'team' ? 'team' : 'admin');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentRole !== 'admin') return;
+    const loadCredentials = async () => {
+      setCredentialsLoading(true);
+      try {
+        const response = await fetch(`/api/teams/${teamName}/credentials`);
+        const data = await response.json();
+        if (data.success) {
+          setTeamAccountStatus(data.status || 'active');
+        } else {
+          addToast(data.message || 'Impossibile caricare le credenziali team', 'error');
+        }
+      } catch (error) {
+        addToast('Impossibile caricare le credenziali team', 'error');
+      } finally {
+        setCredentialsLoading(false);
+      }
+    };
+    loadCredentials();
+  }, [currentRole, teamName, addToast]);
 
   useEffect(() => {
     if (logsOpen && logsRef.current) {
@@ -259,17 +296,19 @@ export default function TeamDetailsPage() {
     setStatus('');
     setError('');
     try {
-      const [envRes, branchRes, statusRes, webhookRes] = await Promise.all([
+      const [envRes, branchRes, statusRes, webhookRes, portRes] = await Promise.all([
         fetch(`/api/teams/${teamName}/env`),
         fetch(`/api/teams/${teamName}/branch`),
         fetch(`/api/teams/${teamName}/status`),
         fetch(`/api/teams/${teamName}/webhook-secret`),
+        fetch(`/api/teams/${teamName}/port`),
       ]);
 
       const envData = await envRes.json();
       const branchData = await branchRes.json();
       const statusData = await statusRes.json();
       const webhookData = await webhookRes.json();
+      const portData = await portRes.json();
 
       if (envData.success) {
         const entries = Array.isArray(envData.envEntries)
@@ -302,6 +341,10 @@ export default function TeamDetailsPage() {
 
       if (statusData.containerName) {
         setContainerName(statusData.containerName);
+      }
+
+      if (portData.success && typeof portData.hostPort === 'number') {
+        setHostPort(portData.hostPort);
       }
 
       if (webhookData.success) {
@@ -590,6 +633,80 @@ export default function TeamDetailsPage() {
     }
   };
 
+  const handleGenerateTeamPassword = async () => {
+    setCredentialsLoading(true);
+    setTeamGeneratedPassword('');
+    try {
+      const response = await fetch(`/api/teams/${teamName}/credentials`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ generate: true }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setTeamGeneratedPassword(data.password || '');
+        addToast('Password generata con successo', 'success');
+      } else {
+        addToast(data.message || 'Generazione password fallita', 'error');
+      }
+    } catch (error) {
+      addToast('Generazione password fallita', 'error');
+    } finally {
+      setCredentialsLoading(false);
+    }
+  };
+
+  const handleSaveTeamPassword = async () => {
+    if (!teamPasswordInput.trim()) {
+      addToast('Inserisci una password valida', 'error');
+      return;
+    }
+    setCredentialsLoading(true);
+    setTeamGeneratedPassword('');
+    try {
+      const response = await fetch(`/api/teams/${teamName}/credentials`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: teamPasswordInput.trim() }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setTeamGeneratedPassword(data.password || teamPasswordInput.trim());
+        setTeamPasswordInput('');
+        addToast('Password aggiornata con successo', 'success');
+      } else {
+        addToast(data.message || 'Aggiornamento password fallito', 'error');
+      }
+    } catch (error) {
+      addToast('Aggiornamento password fallito', 'error');
+    } finally {
+      setCredentialsLoading(false);
+    }
+  };
+
+  const handleToggleTeamStatus = async () => {
+    const nextStatus = teamAccountStatus === 'active' ? 'inactive' : 'active';
+    setCredentialsLoading(true);
+    try {
+      const response = await fetch(`/api/teams/${teamName}/credentials`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setTeamAccountStatus(nextStatus);
+        addToast('Stato credenziali aggiornato', 'success');
+      } else {
+        addToast(data.message || 'Aggiornamento stato fallito', 'error');
+      }
+    } catch (error) {
+      addToast('Aggiornamento stato fallito', 'error');
+    } finally {
+      setCredentialsLoading(false);
+    }
+  };
+
   const handleBranchRefresh = async () => {
     const trimmed = repositoryUrl.trim();
     if (!trimmed || !isGitHubRepoUrl(trimmed)) {
@@ -705,57 +822,59 @@ export default function TeamDetailsPage() {
   return (
     <>
       <div className="w-full max-w-none">
-      {/* Header */}
-      <div className="mb-8 flex items-center gap-4">
-        <button
-          onClick={() => router.push('/dashboard/teams')}
-          className="h-10 w-10 leading-none rounded-lg border border-slate-200 bg-white hover:bg-slate-100 shadow-sm transition flex items-center justify-center"
-          aria-label="Torna all'elenco team"
-        >
-          <ChevronLeft size={24} className="text-slate-600" />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-4xl font-bold text-slate-900">{teamName}</h1>
-          <p className="text-slate-600">Team configuration and deployment</p>
-        </div>
-        {containerStatus && (
-          <div className="flex items-center gap-3 bg-white px-4 py-3 rounded-lg shadow-sm border border-slate-200">
-            <Circle
-              size={12}
-              className={`fill-current ${
-                containerStatus === 'running'
-                  ? 'text-green-500'
-                  : containerStatus === 'stopped' || containerStatus === 'exited'
-                  ? 'text-red-500'
-                  : containerStatus === 'restarting'
-                  ? 'text-yellow-500'
-                  : 'text-slate-400'
-              }`}
-            />
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-slate-700 capitalize">
-                {containerStatus}
-              </span>
-              {containerName && (
-                <span className="text-xs text-slate-500">{containerName}</span>
-              )}
-            </div>
+        {/* Header */}
+        <div className="mb-8 flex items-center gap-4">
+          {currentRole !== 'team' && (
             <button
-              onClick={() => {
-                const nextOpen = !logsOpen;
-                setLogsOpen(nextOpen);
-                if (nextOpen && !logsText) {
-                  fetchLogs();
-                }
-              }}
-              className="ml-2 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition leading-none"
+              onClick={() => router.push('/dashboard/teams')}
+              className="h-10 w-10 leading-none rounded-lg border border-slate-200 bg-white hover:bg-slate-100 shadow-sm transition flex items-center justify-center"
+              aria-label="Torna all'elenco team"
             >
-              <FileText size={14} />
-              Logs
+              <ChevronLeft size={24} className="text-slate-600" />
             </button>
+          )}
+          <div className="flex-1">
+            <h1 className="text-4xl font-bold text-slate-900">{teamName}</h1>
           </div>
-        )}
-      </div>
+          {containerStatus && (
+            <div className="flex items-center gap-3 bg-white px-4 py-3 rounded-lg shadow-sm border border-slate-200">
+              <Circle
+                size={12}
+                className={`fill-current ${
+                  containerStatus === 'running'
+                    ? 'text-green-500'
+                    : containerStatus === 'stopped' || containerStatus === 'exited'
+                    ? 'text-red-500'
+                    : containerStatus === 'restarting'
+                    ? 'text-yellow-500'
+                    : 'text-slate-400'
+                }`}
+              />
+              <div className="flex flex-col">
+                <span className="text-sm font-medium text-slate-700 capitalize">
+                  {containerStatus}
+                </span>
+                {containerName && (
+                  <span className="text-xs text-slate-500">{containerName}</span>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  const nextOpen = !logsOpen;
+                  setLogsOpen(nextOpen);
+                  if (nextOpen && !logsText) {
+                    fetchLogs();
+                  }
+                }}
+                className="ml-2 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition leading-none"
+              >
+                <FileText size={14} />
+                Logs
+              </button>
+            </div>
+          )}
+        </div>
+        {/* end Info Card */}
 
       {logsOpen && (
         <div className="mb-8 bg-white rounded-lg shadow-md p-6 max-w-full overflow-x-hidden">
@@ -820,8 +939,9 @@ export default function TeamDetailsPage() {
         </div>
       </div>
 
-      {/* Branch Configuration */}
-      <div className="mb-8 bg-white rounded-lg shadow-md p-6">
+  {/* Branch Configuration */}
+  {currentRole && (
+  <div className="mb-8 bg-white rounded-lg shadow-md p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-slate-900 flex items-center gap-2 leading-none">
             <GitBranch size={20} className="text-cyan-500 shrink-0 overflow-visible" />
@@ -861,10 +981,11 @@ export default function TeamDetailsPage() {
             className="self-start inline-flex items-center px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
           >
             {saving && <Loader2 size={16} className="mr-2 animate-spin" />}
-            {saving ? 'Updating...' : 'Update Branch'}
+            {saving ? 'Aggiornamento...' : 'Aggiorna branch'}
           </button>
         </div>
-      </div>
+  </div>
+  )}
 
       {/* Environment Variables */}
       <div className="mb-8 bg-white rounded-lg shadow-md p-6">
@@ -1008,8 +1129,9 @@ export default function TeamDetailsPage() {
         </button>
       </div>
 
-      {/* Webhook Secret Configuration */}
-      <div className="mb-8 bg-white rounded-lg shadow-md p-6">
+  {/* Webhook Secret Configuration */}
+  {currentRole && (
+  <div className="mb-8 bg-white rounded-lg shadow-md p-6">
         <h2 className="text-xl font-semibold text-slate-900 mb-4 flex items-center gap-2">
           <Cog size={20} className="text-blue-500" />
           Webhook Secret
@@ -1064,19 +1186,111 @@ export default function TeamDetailsPage() {
               Use this secret to verify webhook requests from your CI/CD pipeline
             </p>
           </div>
-          <button
-            onClick={handleRegenerateSecret}
-            disabled={regeneratingSecret}
-            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition disabled:opacity-50 font-medium flex items-center gap-2 leading-none"
-          >
-            {regeneratingSecret ? <Loader2 size={18} className="animate-spin" /> : <RotateCw size={18} />}
-            {regeneratingSecret ? 'Regenerating...' : 'Regenerate Secret'}
-          </button>
+          {currentRole !== 'team' && (
+            <button
+              onClick={handleRegenerateSecret}
+              disabled={regeneratingSecret}
+              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition disabled:opacity-50 font-medium flex items-center gap-2 leading-none"
+            >
+              {regeneratingSecret ? <Loader2 size={18} className="animate-spin" /> : <RotateCw size={18} />}
+              {regeneratingSecret ? 'Rigenerazione...' : 'Rigenera secret'}
+            </button>
+          )}
         </div>
-      </div>
+  </div>
+  )}
+
+      {currentRole === 'admin' && (
+        <div className="mb-8 bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-semibold text-slate-900 mb-4 flex items-center gap-2">
+            <User size={20} className="text-emerald-500" />
+            Credenziali team
+          </h2>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs text-slate-500">Username team</p>
+              <p className="text-sm font-mono text-slate-900">{teamName}</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Usa questo username per accedere con le credenziali del team.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-slate-700">
+                  Stato account: <span className="font-medium capitalize">{teamAccountStatus}</span>
+                </p>
+                <p className="text-xs text-slate-500">Se inattivo, il team non può effettuare il login.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleTeamStatus}
+                disabled={credentialsLoading}
+                className={`px-4 py-2 rounded-lg text-white transition font-medium ${teamAccountStatus === 'active'
+                  ? 'bg-slate-600 hover:bg-slate-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700'} ${credentialsLoading ? 'opacity-50' : ''}`}
+              >
+                {teamAccountStatus === 'active' ? 'Disattiva account' : 'Attiva account'}
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Nuova password manuale
+                </label>
+                <input
+                  type="text"
+                  value={teamPasswordInput}
+                  onChange={(e) => setTeamPasswordInput(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900"
+                  placeholder="Inserisci password"
+                  disabled={credentialsLoading}
+                />
+              </div>
+              <div className="flex items-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleSaveTeamPassword}
+                  disabled={credentialsLoading}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition font-medium"
+                >
+                  Salva password
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGenerateTeamPassword}
+                  disabled={credentialsLoading}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium"
+                >
+                  Genera password
+                </button>
+              </div>
+            </div>
+            {teamGeneratedPassword && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-emerald-700">Password generata</p>
+                    <p className="font-mono text-sm">
+                      {showGeneratedPassword ? teamGeneratedPassword : '••••••••••••'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowGeneratedPassword((prev) => !prev)}
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition text-xs font-medium"
+                  >
+                    {showGeneratedPassword ? 'Nascondi' : 'Mostra'} password
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Delete Team */}
-      <div className="bg-white rounded-lg shadow-md p-6 border border-red-200">
+      {currentRole === 'admin' && (
+        <div className="bg-white rounded-lg shadow-md p-6 border border-red-200">
         <h2 className="text-xl font-semibold text-slate-900 mb-2 flex items-center gap-2">
           <X size={20} className="text-red-500" />
           Elimina Team
@@ -1090,7 +1304,8 @@ export default function TeamDetailsPage() {
         >
           Elimina team
         </button>
-      </div>
+        </div>
+      )}
     </div>
 
     {deleteOpen && (

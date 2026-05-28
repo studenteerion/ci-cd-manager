@@ -7,6 +7,12 @@ export async function GET(request: NextRequest) {
   if (!authCheck.authenticated) {
     return authCheck.response!;
   }
+  if (authCheck.user?.role !== 'admin') {
+    return NextResponse.json(
+      { error: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
+  }
 
   try {
     const teams = await getTeams();

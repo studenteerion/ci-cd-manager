@@ -13,6 +13,12 @@ export async function GET(
 
   try {
     const { id } = await paramPromise;
+    if (authCheck.user?.role === 'team' && authCheck.user.username !== id) {
+      return NextResponse.json(
+        { success: false, message: 'Operazione non autorizzata' },
+        { status: 403 }
+      );
+    }
     const result = await getTeamHostPort(id);
 
     if (!result.success) {

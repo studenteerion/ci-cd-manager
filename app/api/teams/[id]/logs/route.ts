@@ -67,6 +67,12 @@ export async function GET(
 
   try {
     const { id: teamName } = await paramPromise;
+    if (authCheck.user?.role === 'team' && authCheck.user.username !== teamName) {
+      return NextResponse.json(
+        { success: false, message: 'Operazione non autorizzata' },
+        { status: 403 }
+      );
+    }
     const APPS_DIR = process.env.APPS_BASE_DIR || '/opt/apps';
     const teamDir = path.join(APPS_DIR, teamName);
 

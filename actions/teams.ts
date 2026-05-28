@@ -40,6 +40,7 @@ import {
   serializeEnvEntries,
   validateEnvEntries,
 } from '@/lib/env-file';
+import { createOrResetTeamUser } from '@/lib/auth';
 
 const APPS_DIR = process.env.APPS_BASE_DIR || '/opt/apps';
 const CADDY_CONF_DIR = process.env.CADDY_CONF_DIR || path.join(APPS_DIR, 'caddy', 'conf.d');
@@ -102,7 +103,7 @@ export async function getTeams(): Promise<TeamInfo[]> {
   }
 }
 
-export async function createTeam(input: CreateTeamInput): Promise<{ success: boolean; message: string; hostPort?: number; webhookSecret?: string }> {
+export async function createTeam(input: CreateTeamInput): Promise<{ success: boolean; message: string; hostPort?: number; webhookSecret?: string; teamPassword?: string }> {
   try {
     const { teamName, repositoryUrl, domain, hostPort, envVariables, envEntries, branch } = input;
 
@@ -206,15 +207,19 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
   console.log('Step 9: Reloading Caddy...');
   await reloadCaddy();
 
-  // Step 10: Restart webhook server
-  console.log('Step 10: Restarting webhook server...');
-  await restartWebhookServer();
+    // Step 10: Restart webhook server
+    console.log('Step 10: Restarting webhook server...');
+    await restartWebhookServer();
+
+    // Step 11: Create team credentials
+    const credentials = await createOrResetTeamUser(sanitizedTeamName);
 
     return {
       success: true,
       message: `Team '${sanitizedTeamName}' created successfully.${portMessage} Webhook secret: ${webhookSecret}`,
       hostPort: assignedPort,
       webhookSecret,
+      teamPassword: credentials.password,
     };
   } catch (error) {
     console.error('Team creation error:', error);

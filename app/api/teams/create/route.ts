@@ -8,6 +8,12 @@ export async function POST(request: NextRequest) {
   if (!authCheck.authenticated) {
     return authCheck.response!;
   }
+  if (authCheck.user?.role !== 'admin') {
+    return NextResponse.json(
+      { success: false, message: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
+  }
 
   try {
     const body = await request.json();
@@ -40,6 +46,7 @@ export async function POST(request: NextRequest) {
         message: result.message,
         webhookSecret: result.webhookSecret || result.message.split('secret: ')[1],
         hostPort: result.hostPort,
+        teamPassword: result.teamPassword,
       });
     } else {
       return NextResponse.json(

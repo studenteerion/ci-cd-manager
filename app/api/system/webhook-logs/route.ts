@@ -40,6 +40,12 @@ export async function GET(request: NextRequest) {
   if (!authCheck.authenticated) {
     return authCheck.response!;
   }
+  if (authCheck.user?.role !== 'admin') {
+    return NextResponse.json(
+      { success: false, message: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
+  }
 
   try {
   const tail = Number(request.nextUrl.searchParams.get('tail') || '100');

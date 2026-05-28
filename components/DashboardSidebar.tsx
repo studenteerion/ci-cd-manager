@@ -10,6 +10,7 @@ export function DashboardSidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [username, setUsername] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
 
   useEffect(() => {
     // Read username from cookie
@@ -18,6 +19,11 @@ export function DashboardSidebar() {
     if (userCookie) {
       const user = userCookie.split('=')[1];
       setUsername(decodeURIComponent(user));
+    }
+    const roleCookie = cookies.find(c => c.trim().startsWith('role='));
+    if (roleCookie) {
+      const userRole = roleCookie.split('=')[1];
+      setRole(decodeURIComponent(userRole));
     }
   }, []);
 
@@ -28,6 +34,8 @@ export function DashboardSidebar() {
       'session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
     document.cookie =
       'username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+    document.cookie =
+      'role=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
     router.push('/login');
   };
 
@@ -45,29 +53,47 @@ export function DashboardSidebar() {
 
       {/* Navigation */}
       <nav className="p-4 space-y-2 flex-1">
-        <Link
-          href="/dashboard/teams"
-          className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
-            isActive('/dashboard/teams')
-              ? 'bg-blue-600 text-white'
-              : 'text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          <LayoutGrid size={20} />
-          <span>Teams</span>
-        </Link>
+        {role !== 'team' ? (
+          <>
+            <Link
+              href="/dashboard/teams"
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
+                isActive('/dashboard/teams')
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <LayoutGrid size={20} />
+              <span>Teams</span>
+            </Link>
 
-        <Link
-          href="/dashboard/create-team"
-          className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
-            isActive('/dashboard/create-team')
-              ? 'bg-green-600 text-white'
-              : 'text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          <Plus size={20} />
-          <span>Create Team</span>
-        </Link>
+            <Link
+              href="/dashboard/create-team"
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
+                isActive('/dashboard/create-team')
+                  ? 'bg-green-600 text-white'
+                  : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <Plus size={20} />
+              <span>Create Team</span>
+            </Link>
+          </>
+        ) : (
+          username && (
+            <Link
+              href={`/dashboard/teams/${username}`}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
+                pathname.startsWith(`/dashboard/teams/${username}`)
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <LayoutGrid size={20} />
+              <span>Il mio team</span>
+            </Link>
+          )
+        )}
       </nav>
 
       {/* Bottom Section */}
@@ -80,7 +106,7 @@ export function DashboardSidebar() {
               <User size={16} />
             </div>
             <div className="min-w-0">
-              <p className="text-xs text-slate-400">Logged in as</p>
+              <p className="text-xs text-slate-400">Accesso come</p>
               <p className="text-sm font-medium text-white truncate">{username}</p>
             </div>
           </div>

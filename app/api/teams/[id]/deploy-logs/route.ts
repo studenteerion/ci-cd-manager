@@ -13,6 +13,12 @@ export async function GET(
   }
 
   const { id } = await params;
+  if (authCheck.user?.role === 'team' && authCheck.user.username !== id) {
+    return NextResponse.json(
+      { success: false, message: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
+  }
   try {
     const sanitizedTeamName = id.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const appsDir = process.env.APPS_BASE_DIR || '/opt/apps';

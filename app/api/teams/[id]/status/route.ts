@@ -79,6 +79,12 @@ export async function GET(
     }
 
     const { id: teamName } = await paramPromise;
+    if (authCheck.user?.role === 'team' && authCheck.user.username !== teamName) {
+      return NextResponse.json(
+        { success: false, message: 'Operazione non autorizzata' },
+        { status: 403 }
+      );
+    }
 
     if (isTesting) {
       // In testing mode, return mock status

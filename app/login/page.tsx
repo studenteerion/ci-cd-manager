@@ -26,13 +26,16 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (data.success) {
-        router.replace('/dashboard/teams');
+        const nextRoute = data.role === 'team'
+          ? `/dashboard/teams/${data.username}`
+          : '/dashboard/teams';
+        router.replace(nextRoute);
         router.refresh();
       } else {
-        setError(data.message || 'Login failed');
+        setError(data.message || 'Accesso non riuscito');
       }
     } catch (err) {
-      setError('An error occurred. Please try again.');
+  setError('Si è verificato un errore. Riprova.');
     } finally {
       setLoading(false);
     }
@@ -46,10 +49,10 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="bg-white rounded-lg shadow-xl p-8">
           <h1 className="text-3xl font-bold text-center text-slate-900 mb-2">
-            Multi-Tenant Dashboard
+            Dashboard Multi-Tenant
           </h1>
           <p className="text-center text-slate-600 mb-8">
-            Manage team deployments
+            Gestisci i deployment dei team
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -62,7 +65,7 @@ export default function LoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
-                placeholder="Enter username"
+                placeholder="Inserisci username"
                 disabled={loading}
               />
             </div>
@@ -76,7 +79,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
-                placeholder="Enter password"
+                placeholder="Inserisci password"
                 disabled={loading}
               />
             </div>
@@ -92,7 +95,7 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg transition disabled:opacity-50"
             >
-              {loading ? 'Logging in...' : 'Login'}
+              {loading ? 'Accesso in corso...' : 'Accedi'}
             </button>
           </form>
         </div>

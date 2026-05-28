@@ -14,6 +14,12 @@ export async function GET(
   if (!authCheck.authenticated) {
     return authCheck.response!;
   }
+  if (authCheck.user?.role === 'team' && authCheck.user.username !== (await paramPromise).id) {
+    return NextResponse.json(
+      { success: false, message: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
+  }
 
   try {
     const { id } = await paramPromise;
@@ -75,6 +81,12 @@ export async function POST(
   const authCheck = await requireAuth(request);
   if (!authCheck.authenticated) {
     return authCheck.response!;
+  }
+  if (authCheck.user?.role !== 'admin') {
+    return NextResponse.json(
+      { success: false, message: 'Operazione non autorizzata' },
+      { status: 403 }
+    );
   }
 
   try {
