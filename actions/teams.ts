@@ -124,7 +124,7 @@ export async function getTeams(): Promise<TeamInfo[]> {
     const dirs = await listDirectories(APPS_DIR);
     // Filter out system directories
     const teamDirs = dirs.filter(
-      dir => !['caddy', 'webhook', 'users.json'].includes(dir)
+      dir => !dir.startsWith('.') && !['caddy', 'webhook', 'users.json', 'team-create-status', '.team-create-status'].includes(dir)
     );
     return teamDirs.map(name => ({ name }));
   } catch (error) {

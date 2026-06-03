@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
-import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw, Loader2, Terminal, User, Play, Square, Server, MoreVertical, Folder } from 'lucide-react';
+import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw, Loader2, Terminal, User, Play, Square, Server, MoreVertical, Folder, Globe, Zap } from 'lucide-react';
 import { useToast } from '@/lib/context/ToastContext';
 import { BranchSelector } from '@/components/BranchSelector';
 import { fetchGitHubBranches, fetchGitHubCommits, isGitHubRepoUrl, CommitInfo } from '@/lib/github/client';
@@ -1008,6 +1008,44 @@ export default function TeamDetailsPage() {
           </div>
           <div className="flex-1">
             <h1 className="text-4xl font-bold text-slate-900">{teamName}</h1>
+          </div>
+        </div>
+        <div className="mb-8 bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Server size={20} className="text-slate-600" />
+            <h2 className="text-xl font-semibold text-slate-900">Accesso applicazione</h2>
+          </div>
+          <p className="text-slate-600 mb-4">
+            Indirizzo e porta pubblicati per l'applicazione, come nella lista principale.
+          </p>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-slate-700">
+              <Folder size={16} className="text-slate-500" />
+              <span className="font-mono">/opt/apps/{teamName}</span>
+            </div>
+            <div className="flex items-center gap-2 text-slate-700">
+              <Globe size={16} className="text-emerald-500" />
+              {config?.domain ? (
+                <a
+                  href={`https://${config.domain}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="font-mono text-blue-600 hover:underline"
+                >
+                  {config.domain}
+                </a>
+              ) : (
+                <span className="text-slate-400">Dominio non configurato</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 text-slate-700">
+              <Zap size={16} className="text-amber-500" />
+              {hostPort ? (
+                <span className="font-mono">localhost:{hostPort}</span>
+              ) : (
+                <span className="text-slate-400">Porta non disponibile</span>
+              )}
+            </div>
           </div>
         </div>
         {/* end Info Card */}

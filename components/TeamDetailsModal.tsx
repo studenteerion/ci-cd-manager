@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Cog, Code2, GitBranch, DownloadCloud, RefreshCw } from 'lucide-react';
+import { X, Cog, Code2, GitBranch, DownloadCloud, RefreshCw, Server, Folder, Globe, Zap } from 'lucide-react';
 import { TeamConfig } from '@/actions/teams';
 import { BranchSelector } from '@/components/BranchSelector';
 import { fetchGitHubBranches, isGitHubRepoUrl } from '@/lib/github/client';
@@ -33,6 +33,8 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
   const [branchError, setBranchError] = useState('');
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [envText, setEnvText] = useState('');
+  const [hostPort, setHostPort] = useState<number | null>(null);
+  const [domain, setDomain] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [envUploadOpen, setEnvUploadOpen] = useState(false);
@@ -130,8 +132,14 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
     setStatus('');
     setError('');
     try {
-      const response = await fetch(`/api/teams/${teamId}/env`);
-      const data = await response.json();
+      const [envRes, branchRes, portRes] = await Promise.all([
+        fetch(`/api/teams/${teamId}/env`),
+        fetch(`/api/teams/${teamId}/branch`),
+        fetch(`/api/teams/${teamId}/port`),
+      ]);
+      const data = await envRes.json();
+      const branchData = await branchRes.json();
+      const portData = await portRes.json();
 
       if (data.success) {
         const entries: EnvEntry[] = Array.isArray(data.envEntries)
@@ -150,15 +158,18 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
         setError(data.message || 'Failed to load config');
       }
 
-      const branchResponse = await fetch(`/api/teams/${teamId}/branch`);
-      const branchData = await branchResponse.json();
-
       if (branchData.success) {
         setBranch(branchData.branch);
         setNewBranch(branchData.branch);
       }
       if (data.repository) {
         setRepositoryUrl(data.repository);
+      }
+      if (portData.success) {
+        setHostPort(typeof portData.hostPort === 'number' ? portData.hostPort : null);
+        setDomain(portData.domain ?? data.domain ?? null);
+      } else if (data.domain) {
+        setDomain(data.domain);
       }
     } catch (err) {
       setError('Failed to load team configuration');
@@ -406,6 +417,45 @@ export function TeamDetailsModal({ teamId, isOpen, onClose, onRefresh }: TeamDet
             <div className="text-center text-slate-600">Loading team configuration...</div>
           ) : (
             <>
+              <div className="bg-white border border-slate-200 rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                  <Server size={20} />
+                  Accesso applicazione
+                </h3>
+                <p className="text-sm text-slate-600 mb-3">
+                  Indirizzo e porta disponibili per l'applicazione.
+                </p>
+                <div className="space-y-2 text-sm text-slate-700">
+                  <div className="flex items-center gap-2">
+                    <Folder size={16} className="text-slate-500" />
+                    <span className="font-mono">/opt/apps/{teamId}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Globe size={16} className="text-emerald-500" />
+                    {domain ? (
+                      <a
+                        href={`https://${domain}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="font-mono text-blue-600 hover:underline"
+                      >
+                        {domain}
+                      </a>
+                    ) : (
+                      <span className="text-slate-400">Dominio non configurato</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Zap size={16} className="text-amber-500" />
+                    {hostPort ? (
+                      <span className="font-mono">localhost:{hostPort}</span>
+                    ) : (
+                      <span className="text-slate-400">Porta non disponibile</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {/* Manual Deploy */}
               <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
                 <h3 className="text-lg font-semibold text-slate-900 mb-2 flex items-center gap-2">

@@ -145,7 +145,7 @@ export function DashboardSidebar() {
   };
 
   return (
-  <div className="w-64 bg-slate-900 text-white min-h-screen fixed left-0 top-0 shadow-lg flex flex-col overflow-x-hidden">
+  <div className="w-64 bg-slate-900 text-white min-h-screen fixed left-0 top-0 shadow-lg flex flex-col overflow-x-hidden z-50">
       {/* Logo */}
       <div className="p-6 border-b border-slate-700">
         <h1 className="text-xl font-bold flex items-center gap-2">
@@ -204,7 +204,7 @@ export function DashboardSidebar() {
           <button
             type="button"
             onClick={() => setTaskModalOpen(true)}
-            className="relative mt-6 rounded-lg border border-slate-700 bg-slate-800 p-3 text-left transition hover:bg-slate-700"
+            className="relative mt-6 w-full rounded-lg border border-slate-700 bg-slate-800 p-3 text-left transition hover:bg-slate-700"
           >
             <span className="absolute right-2 top-2">
               <button
@@ -246,7 +246,7 @@ export function DashboardSidebar() {
       </nav>
 
       {taskModalOpen && teamCreateTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
               <div>
