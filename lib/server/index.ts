@@ -8,16 +8,20 @@ import { isTesting, logTestingMode, adjustPathForTesting } from '../env';
 
 const execAsync = promisify(exec);
 
-export async function executeCommand(command: string): Promise<{ stdout: string; stderr: string }> {
+export async function executeCommand(
+  command: string,
+  options?: { timeoutMs?: number }
+): Promise<{ stdout: string; stderr: string }> {
   if (isTesting) {
     logTestingMode(`Would execute: ${command}`);
     return { stdout: '', stderr: '' };
   }
   
   try {
-    const timeoutMs = parseInt(process.env.EXEC_TIMEOUT_MS || '60000', 10);
+    const defaultTimeout = parseInt(process.env.EXEC_TIMEOUT_MS || '60000', 10);
+    const timeoutMs = options?.timeoutMs ?? (isNaN(defaultTimeout) ? 60000 : defaultTimeout);
     const { stdout, stderr } = await execAsync(command, {
-      timeout: isNaN(timeoutMs) ? 60000 : timeoutMs,
+      timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024,
     });
     return { stdout, stderr };
@@ -132,7 +136,7 @@ export async function resolveGitBranch(
 export async function gitClone(
   repoUrl: string,
   targetDir: string,
-  options?: { branch?: string }
+  options?: { branch?: string; onProgress?: (message: string) => void | Promise<void> }
 ): Promise<{ branch: string; defaultBranch?: string }> {
   if (isTesting) {
     logTestingMode(`Would clone ${repoUrl} to ${targetDir}`);
@@ -140,10 +144,100 @@ export async function gitClone(
   }
 
   const resolved = await resolveGitBranch(repoUrl, options?.branch);
+  const depthSetting = process.env.GIT_CLONE_DEPTH;
+  const depthArg = depthSetting && depthSetting !== '0'
+    ? ['--depth', depthSetting]
+    : process.env.GIT_CLONE_SHALLOW === 'true'
+      ? ['--depth', '1']
+      : [];
+  const timeoutMs = parseInt(process.env.GIT_CLONE_TIMEOUT_MS || '600000', 10);
+  const commandString = `git clone --branch "${resolved.branch}" --single-branch${depthArg.length ? ` ${depthArg.join(' ')}` : ''} "${repoUrl}" "${targetDir}"`;
   try {
-    await executeCommand(
-      `git clone --branch "${resolved.branch}" --single-branch "${repoUrl}" "${targetDir}"`
-    );
+    if (!options?.onProgress) {
+      await executeCommand(commandString, { timeoutMs: isNaN(timeoutMs) ? 600000 : timeoutMs });
+      return resolved;
+    }
+
+    const args = [
+      'clone',
+      '--branch',
+      resolved.branch,
+      '--single-branch',
+      '--progress',
+      ...depthArg,
+      repoUrl,
+      targetDir,
+    ];
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const child = spawn('git', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      let buffer = '';
+      let lastProgress = '';
+      let lastProgressAt = 0;
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+        rejectPromise(new Error(`Command failed: git clone timed out after ${isNaN(timeoutMs) ? 600000 : timeoutMs}ms | command: ${commandString}`));
+      }, isNaN(timeoutMs) ? 600000 : timeoutMs);
+
+      const emitProgress = async (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        const now = Date.now();
+        if (trimmed === lastProgress && now - lastProgressAt < 1000) return;
+        if (
+          !trimmed.includes('%') &&
+          !trimmed.toLowerCase().includes('receiving objects') &&
+          !trimmed.toLowerCase().includes('resolving deltas') &&
+          !trimmed.toLowerCase().includes('counting objects')
+        ) {
+          return;
+        }
+        lastProgress = trimmed;
+        lastProgressAt = now;
+        try {
+          await options.onProgress?.(trimmed);
+        } catch {
+          // ignore progress update failures
+        }
+      };
+
+      child.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on('data', (data: Buffer) => {
+        const text = data.toString();
+        stderr += text;
+        buffer += text;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        lines.forEach((line) => {
+          void emitProgress(line);
+        });
+      });
+
+      child.on('error', (error) => {
+        clearTimeout(timeout);
+        rejectPromise(new Error(`Command failed: ${error.message} | command: ${commandString}`));
+      });
+
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        if (buffer) {
+          void emitProgress(buffer);
+        }
+        if (code === 0) {
+          resolvePromise();
+          return;
+        }
+        const parts = [`Command failed: git clone exited with code ${code}`];
+        if (stdout.trim()) parts.push(`stdout: ${stdout.trim()}`);
+        if (stderr.trim()) parts.push(`stderr: ${stderr.trim()}`);
+        parts.push(`command: ${commandString}`);
+        rejectPromise(new Error(parts.join(' | ')));
+      });
+    });
     return resolved;
   } catch (error) {
     throw new Error(formatGitAccessError(error as Error));

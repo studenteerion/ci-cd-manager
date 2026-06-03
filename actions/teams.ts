@@ -145,6 +145,7 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
 
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+  const adjustedTeamDir = adjustPathForTesting(teamDir);
 
     const now = new Date().toISOString();
     statusFile = {
@@ -182,6 +183,16 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
       await writeTeamCreateStatus(sanitizedTeamName, statusFile);
     };
 
+    const updateStatusMessage = async (message: string) => {
+      if (!statusFile) return;
+      statusFile = {
+        ...statusFile,
+        message,
+        updatedAt: new Date().toISOString(),
+      };
+      await writeTeamCreateStatus(sanitizedTeamName, statusFile);
+    };
+
     const normalizedEntries = envEntries && envEntries.length > 0
       ? envEntries
       : recordToEnvEntries(envVariables || {});
@@ -201,16 +212,38 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
       ? ` Requested port ${hostPort} was unavailable and assigned ${assignedPort}.`
       : '';
 
-    // Step 1: Create team directory
-  console.log('Step 1: Creating directory...');
-  await updateStep('create_directory', 'in-progress');
-  await createDirectory(teamDir);
-  await updateStep('create_directory', 'done');
+    // Step 1: Create team directory (cleanup failed attempts if needed)
+    console.log('Step 1: Creating directory...');
+    await updateStep('create_directory', 'in-progress');
+    if (await fileExists(teamDir)) {
+      const existingEntries = await fs.readdir(adjustedTeamDir).catch(() => []);
+      const hasConfig = await fs
+        .access(path.join(adjustedTeamDir, 'team.config.json'))
+        .then(() => true)
+        .catch(() => false);
+
+      if (hasConfig) {
+        await updateStep('create_directory', 'error');
+        return {
+          success: false,
+          message: `La directory '${sanitizedTeamName}' esiste già. Scegli un altro nome o rimuovi quella cartella.`,
+        };
+      }
+
+      if (existingEntries.length > 0) {
+        await removePath(teamDir);
+      }
+    }
+    await createDirectory(teamDir);
+    await updateStep('create_directory', 'done');
 
     // Step 2: Git clone
     console.log('Step 2: Cloning repository...');
     await updateStep('git_clone', 'in-progress');
-    const { branch: resolvedBranch } = await gitClone(repositoryUrl, teamDir, { branch });
+    const { branch: resolvedBranch } = await gitClone(repositoryUrl, teamDir, {
+      branch,
+      onProgress: (progress: string) => updateStatusMessage(`Clonazione repository: ${progress}`),
+    });
     await updateStep('git_clone', 'done');
 
     // Step 3: Create .env file
