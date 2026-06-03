@@ -415,12 +415,7 @@ async function generateRuntimeComposeFile(teamDir: string): Promise<string | und
   return runtimeComposePath;
 }
 
-export async function restartContainers(teamDir: string): Promise<void> {
-  if (isTesting) {
-    logTestingMode(`Would run docker compose up in ${teamDir}`);
-    return;
-  }
-
+async function buildComposeBase(teamDir: string): Promise<string> {
   const runtimeComposePath = await generateRuntimeComposeFile(teamDir);
   const overridePath = path.join(teamDir, 'docker-compose.override.yml');
   const composeArgs: string[] = [];
@@ -438,15 +433,82 @@ export async function restartContainers(teamDir: string): Promise<void> {
     composeArgs.push('-f', `"${overridePath}"`);
   }
 
-  const composeBase = composeArgs.length > 0
+  return composeArgs.length > 0
     ? `docker compose ${composeArgs.join(' ')}`
     : 'docker compose';
+}
+
+export async function restartContainers(teamDir: string): Promise<void> {
+  if (isTesting) {
+    logTestingMode(`Would run docker compose up in ${teamDir}`);
+    return;
+  }
+
+  const composeBase = await buildComposeBase(teamDir);
 
   // First, stop and remove existing containers to free up ports
   await executeCommand(`cd "${teamDir}" && ${composeBase} down --remove-orphans`);
 
   // Then bring up containers
   await executeCommand(`cd "${teamDir}" && ${composeBase} up -d`);
+}
+
+export async function stopContainers(teamDir: string): Promise<void> {
+  if (isTesting) {
+    logTestingMode(`Would stop docker compose containers in ${teamDir}`);
+    return;
+  }
+
+  const composeBase = await buildComposeBase(teamDir);
+  await executeCommand(`cd "${teamDir}" && ${composeBase} stop`);
+}
+
+export async function startContainers(teamDir: string): Promise<void> {
+  if (isTesting) {
+    logTestingMode(`Would start docker compose containers in ${teamDir}`);
+    return;
+  }
+
+  const composeBase = await buildComposeBase(teamDir);
+  await executeCommand(`cd "${teamDir}" && ${composeBase} up -d`);
+}
+
+export async function removeContainers(teamDir: string, removeVolumes: boolean = false): Promise<void> {
+  if (isTesting) {
+    logTestingMode(`Would remove docker compose containers in ${teamDir} (volumes: ${removeVolumes})`);
+    return;
+  }
+
+  const composeBase = await buildComposeBase(teamDir);
+  const volumeFlag = removeVolumes ? ' -v' : '';
+  await executeCommand(`cd "${teamDir}" && ${composeBase} down --remove-orphans${volumeFlag}`);
+}
+
+export async function rebuildContainers(teamDir: string): Promise<void> {
+  if (isTesting) {
+    logTestingMode(`Would rebuild docker compose containers in ${teamDir}`);
+    return;
+  }
+
+  const composeBase = await buildComposeBase(teamDir);
+  await executeCommand(`cd "${teamDir}" && ${composeBase} up -d --build --force-recreate`);
+}
+
+export async function getComposeState(teamDir: string): Promise<{ hasContainers: boolean; hasImages: boolean }> {
+  if (isTesting) {
+    logTestingMode(`Would inspect docker compose state in ${teamDir}`);
+    return { hasContainers: false, hasImages: false };
+  }
+
+  const composeBase = await buildComposeBase(teamDir);
+  const [{ stdout: containerStdout }, { stdout: imageStdout }] = await Promise.all([
+    executeCommand(`cd "${teamDir}" && ${composeBase} ps -q`),
+    executeCommand(`cd "${teamDir}" && ${composeBase} images -q`),
+  ]);
+  return {
+    hasContainers: containerStdout.trim().length > 0,
+    hasImages: imageStdout.trim().length > 0,
+  };
 }
 
 export async function deployTeam(teamDir: string, teamName?: string): Promise<void> {

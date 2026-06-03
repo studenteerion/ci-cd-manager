@@ -13,6 +13,11 @@ import {
   restartWebhookServer,
   listDirectories,
   restartContainers,
+  startContainers,
+  stopContainers,
+  removeContainers,
+  rebuildContainers,
+  getComposeState,
   deployTeam,
   updateWebhookBranch,
   findAvailableHostPort,
@@ -48,6 +53,31 @@ const CADDY_LOGS_DIR = process.env.CADDY_LOGS_DIR || path.join(APPS_DIR, 'caddy'
 const WEBHOOK_SCRIPTS_DIR = process.env.WEBHOOK_SCRIPTS_DIR || path.join(APPS_DIR, 'webhook', 'scripts');
 const WEBHOOK_LOGS_DIR = process.env.WEBHOOK_LOGS_DIR || path.join(APPS_DIR, 'webhook', 'logs');
 const HOOKS_JSON_PATH = process.env.WEBHOOK_HOOKS_FILE || path.join(APPS_DIR, 'webhook', 'hooks.json');
+const TEAM_CREATE_STATUS_DIR = process.env.TEAM_CREATE_STATUS_DIR || path.join(APPS_DIR, '.team-create-status');
+
+type TeamCreateStepStatus = 'pending' | 'in-progress' | 'done' | 'error';
+
+interface TeamCreateStep {
+  id: string;
+  label: string;
+  status: TeamCreateStepStatus;
+}
+
+interface TeamCreateStatusFile {
+  teamName: string;
+  status: 'pending' | 'success' | 'error';
+  steps: TeamCreateStep[];
+  currentStep?: string;
+  message?: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
+async function writeTeamCreateStatus(teamName: string, status: TeamCreateStatusFile): Promise<void> {
+  await createDirectory(TEAM_CREATE_STATUS_DIR);
+  const filePath = path.join(TEAM_CREATE_STATUS_DIR, `${teamName}.json`);
+  await writeJSON(filePath, status);
+}
 
 export interface CreateTeamInput {
   teamName: string;
@@ -104,6 +134,7 @@ export async function getTeams(): Promise<TeamInfo[]> {
 }
 
 export async function createTeam(input: CreateTeamInput): Promise<{ success: boolean; message: string; hostPort?: number; webhookSecret?: string; teamPassword?: string }> {
+  let statusFile: TeamCreateStatusFile | null = null;
   try {
     const { teamName, repositoryUrl, domain, hostPort, envVariables, envEntries, branch } = input;
 
@@ -114,6 +145,42 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
 
     const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+
+    const now = new Date().toISOString();
+    statusFile = {
+      teamName: sanitizedTeamName,
+      status: 'pending',
+      steps: [
+        { id: 'create_directory', label: 'Creazione directory', status: 'pending' },
+        { id: 'git_clone', label: 'Clonazione repository', status: 'pending' },
+        { id: 'env_file', label: 'Creazione file .env', status: 'pending' },
+        { id: 'config_files', label: 'Configurazione servizi', status: 'pending' },
+        { id: 'webhook_secret', label: 'Generazione webhook secret', status: 'pending' },
+        { id: 'hooks_entry', label: 'Aggiornamento webhook hooks', status: 'pending' },
+        { id: 'deploy_script', label: 'Creazione script deploy', status: 'pending' },
+        { id: 'containers', label: 'Avvio container', status: 'pending' },
+        { id: 'caddy_reload', label: 'Reload Caddy', status: 'pending' },
+        { id: 'webhook_restart', label: 'Restart webhook server', status: 'pending' },
+        { id: 'team_credentials', label: 'Creazione credenziali team', status: 'pending' },
+      ],
+      currentStep: 'create_directory',
+      startedAt: now,
+      updatedAt: now,
+    };
+    await writeTeamCreateStatus(sanitizedTeamName, statusFile);
+
+    const updateStep = async (stepId: string, status: TeamCreateStepStatus) => {
+      if (!statusFile) return;
+      statusFile = {
+        ...statusFile,
+        currentStep: stepId,
+        steps: statusFile.steps.map((step) =>
+          step.id === stepId ? { ...step, status } : step
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+      await writeTeamCreateStatus(sanitizedTeamName, statusFile);
+    };
 
     const normalizedEntries = envEntries && envEntries.length > 0
       ? envEntries
@@ -135,21 +202,28 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
       : '';
 
     // Step 1: Create team directory
-    console.log('Step 1: Creating directory...');
-    await createDirectory(teamDir);
+  console.log('Step 1: Creating directory...');
+  await updateStep('create_directory', 'in-progress');
+  await createDirectory(teamDir);
+  await updateStep('create_directory', 'done');
 
     // Step 2: Git clone
     console.log('Step 2: Cloning repository...');
-  const { branch: resolvedBranch } = await gitClone(repositoryUrl, teamDir, { branch });
+    await updateStep('git_clone', 'in-progress');
+    const { branch: resolvedBranch } = await gitClone(repositoryUrl, teamDir, { branch });
+    await updateStep('git_clone', 'done');
 
     // Step 3: Create .env file
-    console.log('Step 3: Creating .env file...');
-    const envContent = serializeEnvEntries(envValidation.entries);
-    const envPath = path.join(teamDir, '.env');
-    await writeFile(envPath, envContent);
+  console.log('Step 3: Creating .env file...');
+  await updateStep('env_file', 'in-progress');
+  const envContent = serializeEnvEntries(envValidation.entries);
+  const envPath = path.join(teamDir, '.env');
+  await writeFile(envPath, envContent);
+  await updateStep('env_file', 'done');
 
     // Step 4: Save team configuration, create docker-compose override, and generate Caddy config
     console.log('Step 4: Creating team config, docker-compose override, and Caddy config...');
+    await updateStep('config_files', 'in-progress');
     const teamConfig: TeamConfigFile = {
       hostPort: assignedPort,
       domain,
@@ -171,48 +245,75 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
     const caddyPath = path.join(CADDY_CONF_DIR, `${sanitizedTeamName}.conf`);
     await writeFile(caddyPath, caddyConfig);
 
+  await updateStep('config_files', 'done');
+
     console.log("TEAM CONFIGURATION SAVED IN:", caddyPath, caddyConfig);
 
     // Step 5: Generate webhook secret
-    console.log('Step 5: Generating webhook secret...');
-    const webhookSecret = await generateWebhookSecret();
+  console.log('Step 5: Generating webhook secret...');
+  await updateStep('webhook_secret', 'in-progress');
+  const webhookSecret = await generateWebhookSecret();
+  await updateStep('webhook_secret', 'done');
 
     // Step 6: Add entry to hooks.json
     console.log('Step 6: Adding webhook hook...');
+    await updateStep('hooks_entry', 'in-progress');
     const webhookDir = path.dirname(HOOKS_JSON_PATH);
     await createDirectory(webhookDir);
     const hooks = await readJSON<any[]>(HOOKS_JSON_PATH, []);
-  const newHook = generateWebhookHookEntry(sanitizedTeamName, webhookSecret, resolvedBranch);
+    const newHook = generateWebhookHookEntry(sanitizedTeamName, webhookSecret, resolvedBranch);
     const existingHookIndex = hooks.findIndex(hook => hook.id === sanitizedTeamName);
     if (existingHookIndex !== -1) {
       hooks.splice(existingHookIndex, 1);
     }
     hooks.push(newHook);
     await writeJSON(HOOKS_JSON_PATH, hooks);
+    await updateStep('hooks_entry', 'done');
 
     // Step 7: Create deploy script
     console.log('Step 7: Creating deploy script...');
+    await updateStep('deploy_script', 'in-progress');
     await createDirectory(WEBHOOK_SCRIPTS_DIR);
-  const logFile = path.join(APPS_DIR, 'webhook', 'logs', `deploy-${sanitizedTeamName}.log`);
-  const deployScript = generateDeployScript(sanitizedTeamName, resolvedBranch, teamDir, logFile, serviceName, containerPort);
+    const logFile = path.join(APPS_DIR, 'webhook', 'logs', `deploy-${sanitizedTeamName}.log`);
+    const deployScript = generateDeployScript(sanitizedTeamName, resolvedBranch, teamDir, logFile, serviceName, containerPort);
     const scriptPath = path.join(WEBHOOK_SCRIPTS_DIR, `deploy-${sanitizedTeamName}.sh`);
     await writeFile(scriptPath, deployScript);
     await chmod(scriptPath, 0o755);
+    await updateStep('deploy_script', 'done');
 
   // Step 8: Start team containers
-  console.log('Step 8: Starting team containers...');
-  await restartContainers(teamDir);
+    console.log('Step 8: Starting team containers...');
+    await updateStep('containers', 'in-progress');
+    await restartContainers(teamDir);
+    await updateStep('containers', 'done');
 
   // Step 9: Reload Caddy
-  console.log('Step 9: Reloading Caddy...');
-  await reloadCaddy();
+    console.log('Step 9: Reloading Caddy...');
+    await updateStep('caddy_reload', 'in-progress');
+    await reloadCaddy();
+    await updateStep('caddy_reload', 'done');
 
     // Step 10: Restart webhook server
-    console.log('Step 10: Restarting webhook server...');
-    await restartWebhookServer();
+  console.log('Step 10: Restarting webhook server...');
+  await updateStep('webhook_restart', 'in-progress');
+  await restartWebhookServer();
+  await updateStep('webhook_restart', 'done');
 
     // Step 11: Create team credentials
+    await updateStep('team_credentials', 'in-progress');
     const credentials = await createOrResetTeamUser(sanitizedTeamName);
+    await updateStep('team_credentials', 'done');
+
+    if (statusFile) {
+      statusFile = {
+        ...statusFile,
+        status: 'success',
+        currentStep: undefined,
+        updatedAt: new Date().toISOString(),
+        steps: statusFile.steps.map((step) => ({ ...step, status: 'done' })),
+      };
+      await writeTeamCreateStatus(sanitizedTeamName, statusFile);
+    }
 
     return {
       success: true,
@@ -224,6 +325,39 @@ export async function createTeam(input: CreateTeamInput): Promise<{ success: boo
   } catch (error) {
     console.error('Team creation error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error occurred';
+    const sanitizedTeamName = input?.teamName
+      ? input.teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+      : '';
+    if (sanitizedTeamName) {
+      const fallback: TeamCreateStatusFile = statusFile
+        ? (() => {
+            const currentStep = statusFile.currentStep;
+            return {
+              ...statusFile,
+              status: 'error',
+              message,
+              updatedAt: new Date().toISOString(),
+              steps: statusFile.steps.map((step) =>
+                step.id === currentStep
+                  ? { ...step, status: 'error' }
+                  : step
+              ),
+            };
+          })()
+        : {
+            teamName: sanitizedTeamName,
+            status: 'error',
+            steps: [],
+            message,
+            startedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+      try {
+        await writeTeamCreateStatus(sanitizedTeamName, fallback);
+      } catch {
+        // ignore status write errors
+      }
+    }
     return { success: false, message };
   }
 }
@@ -512,6 +646,126 @@ export async function updateTeamEnv(
   } catch (error) {
     console.error('Failed to update team env:', error);
     const message = error instanceof Error ? error.message : 'Failed to update environment variables';
+    return { success: false, message };
+  }
+}
+
+export async function stopTeamContainer(
+  teamName: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+    await stopContainers(teamDir);
+    return {
+      success: true,
+      message: `Container fermato per team '${sanitizedTeamName}'.`,
+    };
+  } catch (error) {
+    console.error('Failed to stop container:', error);
+    const message = error instanceof Error ? error.message : 'Failed to stop container';
+    return { success: false, message };
+  }
+}
+
+export async function startTeamContainer(
+  teamName: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+    await startContainers(teamDir);
+    return {
+      success: true,
+      message: `Container avviato per team '${sanitizedTeamName}'.`,
+    };
+  } catch (error) {
+    console.error('Failed to start container:', error);
+    const message = error instanceof Error ? error.message : 'Failed to start container';
+    return { success: false, message };
+  }
+}
+
+export async function removeTeamContainer(
+  teamName: string,
+  removeVolumes: boolean
+): Promise<{ success: boolean; message: string; requiresRebuild?: boolean; requiresRecreate?: boolean }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+    await removeContainers(teamDir, removeVolumes);
+
+    if (!removeVolumes) {
+      return {
+        success: true,
+        message: `Container rimosso per team '${sanitizedTeamName}'.`,
+      };
+    }
+
+    const state = await getComposeState(teamDir);
+    return {
+      success: true,
+      message: `Container e volumi rimossi per team '${sanitizedTeamName}'.`,
+      requiresRebuild: !state.hasImages,
+      requiresRecreate: !state.hasContainers,
+    };
+  } catch (error) {
+    console.error('Failed to remove container:', error);
+    const message = error instanceof Error ? error.message : 'Failed to remove container';
+    return { success: false, message };
+  }
+}
+
+export async function rebuildTeamContainer(
+  teamName: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+    await rebuildContainers(teamDir);
+    return {
+      success: true,
+      message: `Container ricreato per team '${sanitizedTeamName}'.`,
+    };
+  } catch (error) {
+    console.error('Failed to rebuild container:', error);
+    const message = error instanceof Error ? error.message : 'Failed to rebuild container';
+    return { success: false, message };
+  }
+}
+
+export async function recreateTeamContainer(
+  teamName: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+    await startContainers(teamDir);
+    return {
+      success: true,
+      message: `Container ricreato per team '${sanitizedTeamName}'.`,
+    };
+  } catch (error) {
+    console.error('Failed to recreate container:', error);
+    const message = error instanceof Error ? error.message : 'Failed to recreate container';
+    return { success: false, message };
+  }
+}
+
+export async function restartTeamContainer(
+  teamName: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const sanitizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamDir = path.join(APPS_DIR, sanitizedTeamName);
+    await restartContainers(teamDir);
+    return {
+      success: true,
+      message: `Container riavviato per team '${sanitizedTeamName}'.`,
+    };
+  } catch (error) {
+    console.error('Failed to restart container:', error);
+    const message = error instanceof Error ? error.message : 'Failed to restart container';
     return { success: false, message };
   }
 }

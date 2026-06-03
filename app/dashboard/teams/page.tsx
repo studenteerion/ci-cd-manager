@@ -209,9 +209,6 @@ export default function TeamsPage() {
             >
               {systemLogsLoading ? 'Loading logs...' : systemLogsText || 'No logs available.'}
             </div>
-            <div className="px-4 pb-3 text-[11px] text-slate-400">
-              Aggiornamento manuale: lo scroll resta fermo se sei lontano dal fondo.
-            </div>
           </div>
         )}
       </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Plus } from 'lucide-react';
 import { DownloadCloud } from 'lucide-react';
 import {
@@ -20,6 +20,36 @@ interface EnvVariable {
 interface CreateTeamFormProps {
   onSuccess: () => void;
 }
+
+type TeamCreatePayload = {
+  teamName: string;
+  repositoryUrl: string;
+  domain: string;
+  branch: string;
+  envEntries: EnvEntry[];
+};
+
+type TeamCreateTask = {
+  status: 'pending' | 'success' | 'error';
+  teamName: string;
+  message?: string;
+  startedAt: string;
+  payload: TeamCreatePayload;
+};
+
+type TeamCreateStepStatus = 'pending' | 'in-progress' | 'done' | 'error';
+
+type TeamCreateStatusFile = {
+  teamName: string;
+  status: 'pending' | 'success' | 'error';
+  steps: Array<{ id: string; label: string; status: TeamCreateStepStatus }>;
+  currentStep?: string;
+  message?: string;
+  startedAt: string;
+  updatedAt: string;
+};
+
+const TEAM_TASK_STORAGE_KEY = 'team-create-task';
 
 export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
   const [teamName, setTeamName] = useState('');
@@ -47,21 +77,106 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
   const branchFetchAbortRef = useRef<AbortController | null>(null);
   const branchFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchTouchedRef = useRef(false);
+  const [activeTaskName, setActiveTaskName] = useState<string | null>(null);
+  const [taskStatus, setTaskStatus] = useState<TeamCreateStatusFile | null>(null);
+
+  const persistTask = useCallback((task: TeamCreateTask | null) => {
+    if (typeof window === 'undefined') return;
+    if (task) {
+      window.localStorage.setItem(TEAM_TASK_STORAGE_KEY, JSON.stringify(task));
+    } else {
+      window.localStorage.removeItem(TEAM_TASK_STORAGE_KEY);
+    }
+    window.dispatchEvent(new Event('team-create-task'));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const loadTask = () => {
+      const stored = window.localStorage.getItem(TEAM_TASK_STORAGE_KEY);
+      if (!stored) {
+        setActiveTaskName(null);
+        return;
+      }
+      try {
+        const task = JSON.parse(stored) as TeamCreateTask;
+        if (task.status === 'pending') {
+          setActiveTaskName(task.teamName);
+        }
+      } catch {
+        setActiveTaskName(null);
+      }
+    };
+
+    loadTask();
+    window.addEventListener('storage', loadTask);
+    window.addEventListener('team-create-task', loadTask as EventListener);
+    return () => {
+      window.removeEventListener('storage', loadTask);
+      window.removeEventListener('team-create-task', loadTask as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeTaskName) {
+      setTaskStatus(null);
+      return;
+    }
+
+    let active = true;
+    const fetchStatus = async () => {
+      try {
+        const response = await fetch(`/api/teams/create-status?team=${encodeURIComponent(activeTaskName)}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!active || !data?.success) return;
+        setTaskStatus(data.status as TeamCreateStatusFile);
+
+        if (data.status?.status === 'success') {
+          const stored = window.localStorage.getItem(TEAM_TASK_STORAGE_KEY);
+          if (stored) {
+            const task = JSON.parse(stored) as TeamCreateTask;
+            persistTask({ ...task, status: 'success', message: 'Creazione completata' });
+          }
+          setSuccess('Creazione completata.');
+          setTimeout(() => persistTask(null), 5000);
+        }
+        if (data.status?.status === 'error') {
+          setError(data.status?.message || 'Errore durante la creazione del team');
+          const stored = window.localStorage.getItem(TEAM_TASK_STORAGE_KEY);
+          if (stored) {
+            const task = JSON.parse(stored) as TeamCreateTask;
+            persistTask({ ...task, status: 'error', message: data.status?.message });
+          }
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 4000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [activeTaskName, persistTask]);
 
   const handleAddEnvVar = () => {
     setEnvVariables([...envVariables, { key: '', value: '' }]);
   };
 
   const handleTeamNameChange = (value: string) => {
-    setTeamName(value);
-    if (baseDomain && value && !subdomainTouched) {
-      setSubdomain(value);
+    const normalized = value.replace(/\s+/g, '');
+    setTeamName(normalized);
+    if (baseDomain && normalized && !subdomainTouched) {
+      setSubdomain(normalized);
     }
   };
 
   const handleTeamNameBlur = () => {
     if (baseDomain && teamName && !subdomainTouched) {
-      setSubdomain(teamName);
+      setSubdomain(teamName.replace(/\s+/g, ''));
     }
   };
 
@@ -228,16 +343,127 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
     };
   }, [repositoryUrl]);
 
+  const executeCreateTeam = useCallback(
+    async (payload: TeamCreatePayload, options?: { resume?: boolean }) => {
+      setError('');
+      setSuccess('');
+      setLoading(true);
+
+      const task: TeamCreateTask = {
+        status: 'pending',
+        teamName: payload.teamName,
+        startedAt: new Date().toISOString(),
+        payload,
+      };
+      persistTask(task);
+
+      try {
+        const response = await fetch('/api/teams/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          const passwordInfo = data.teamPassword
+            ? ` Password team: ${data.teamPassword}`
+            : '';
+          const message = `Team creato con successo. Webhook secret: ${data.webhookSecret}.${passwordInfo}`;
+          setSuccess(message);
+          persistTask({
+            ...task,
+            status: 'success',
+            message,
+          });
+
+          setTeamName('');
+          setRepositoryUrl('');
+          setDomain('');
+          setSubdomain('');
+          setSubdomainTouched(false);
+          setBranch('');
+          setBranchOptions([]);
+          setBranchStatus('idle');
+          setBranchError('');
+          setDefaultBranch(null);
+          setEnvVariables([{ key: '', value: '' }]);
+
+          setTimeout(() => {
+            persistTask(null);
+          }, 5000);
+
+          if (!options?.resume) {
+            setTimeout(onSuccess, 1000);
+          }
+        } else {
+          const message = data.message || 'Failed to create team';
+          setError(message);
+          persistTask({
+            ...task,
+            status: 'error',
+            message,
+          });
+        }
+      } catch (err) {
+        const message = 'An error occurred. Please try again.';
+        setError(message);
+        persistTask({
+          ...task,
+          status: 'error',
+          message,
+        });
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [onSuccess, persistTask]
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = window.localStorage.getItem(TEAM_TASK_STORAGE_KEY);
+    if (!stored) return;
+
+    try {
+      const task = JSON.parse(stored) as TeamCreateTask;
+      if (task.status !== 'pending') return;
+
+      setTeamName(task.payload.teamName);
+      setRepositoryUrl(task.payload.repositoryUrl);
+      setBranch(task.payload.branch);
+      setEnvVariables(
+        task.payload.envEntries.length
+          ? task.payload.envEntries.map((entry) => ({ key: entry.key, value: entry.value }))
+          : [{ key: '', value: '' }]
+      );
+
+      if (baseDomain && task.payload.domain.endsWith(`.${baseDomain}`)) {
+        setSubdomain(task.payload.domain.replace(`.${baseDomain}`, ''));
+        setSubdomainTouched(true);
+      } else {
+        setDomain(task.payload.domain);
+      }
+    } catch (error) {
+      console.error('Failed to load pending team creation task', error);
+    }
+  }, [baseDomain]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setSuccess('');
-    setLoading(true);
+
 
     try {
       const finalDomain = baseDomain ? computedDomain : domain;
       if (!teamName || !repositoryUrl || !finalDomain) {
         setError('Please fill in all required fields');
+        return;
+      }
+
+      if (/\s/.test(teamName) || /\s/.test(finalDomain)) {
+        setError('Team name and domain cannot contain spaces');
         return;
       }
 
@@ -258,47 +484,16 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
         return;
       }
 
-      const response = await fetch('/api/teams/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          teamName,
-          repositoryUrl,
-          domain: finalDomain,
-          branch,
-          envEntries: validation.entries,
-        }),
+      await executeCreateTeam({
+        teamName,
+        repositoryUrl,
+        domain: finalDomain,
+        branch,
+        envEntries: validation.entries,
       });
-
-      const data = await response.json();
-
-      if (data.success) {
-        const passwordInfo = data.teamPassword
-          ? ` Password team: ${data.teamPassword}`
-          : '';
-        setSuccess(`Team creato con successo. Webhook secret: ${data.webhookSecret}.${passwordInfo}`);
-        setTeamName('');
-        setRepositoryUrl('');
-        setDomain('');
-        setSubdomain('');
-        setSubdomainTouched(false);
-  setBranch('');
-  setBranchOptions([]);
-  setBranchStatus('idle');
-  setBranchError('');
-  setDefaultBranch(null);
-        setEnvVariables([{ key: '', value: '' }]);
-        
-        // Call parent callback to refresh teams list
-        setTimeout(onSuccess, 1000);
-      } else {
-        setError(data.message || 'Failed to create team');
-      }
     } catch (err) {
       setError('An error occurred. Please try again.');
       console.error(err);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -312,7 +507,8 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-slate-900 mb-1">
-            Team Name *
+            Team Name
+            <span className="ml-2 text-xs font-semibold uppercase text-red-500">Required</span>
           </label>
           <input
             type="text"
@@ -322,12 +518,14 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
             className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
             placeholder="e.g., alpha, beta"
             disabled={loading}
+            required
           />
         </div>
 
         <div>
           <label className="block text-sm font-medium text-slate-900 mb-1">
-            Repository URL (HTTPS) *
+            Repository URL (HTTPS)
+            <span className="ml-2 text-xs font-semibold uppercase text-red-500">Required</span>
           </label>
           <input
             type="url"
@@ -336,12 +534,14 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
             className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
             placeholder="https://github.com/org/repo.git"
             disabled={loading}
+            required
           />
         </div>
 
         <div>
           <label className="block text-sm font-medium text-slate-900 mb-1">
-            {baseDomain ? 'Subdomain *' : 'Domain *'}
+            {baseDomain ? 'Subdomain' : 'Domain'}
+            <span className="ml-2 text-xs font-semibold uppercase text-red-500">Required</span>
           </label>
           {baseDomain ? (
             <div>
@@ -350,12 +550,13 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
                   type="text"
                   value={subdomain}
                   onChange={(e) => {
-                    setSubdomain(e.target.value.trim());
+                    setSubdomain(e.target.value.replace(/\s+/g, ''));
                     setSubdomainTouched(true);
                   }}
                   className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
                   placeholder="e.g., alpha"
                   disabled={loading}
+                  required
                 />
                 <span className="text-sm text-slate-500">.{baseDomain}</span>
               </div>
@@ -367,32 +568,40 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
             <input
               type="text"
               value={domain}
-              onChange={(e) => setDomain(e.target.value)}
+              onChange={(e) => setDomain(e.target.value.replace(/\s+/g, ''))}
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder-slate-500"
               placeholder="alpha.example.com"
               disabled={loading}
+              required
             />
           )}
         </div>
 
-        <BranchSelector
-          branch={branch}
-          branches={branchOptions}
-          defaultBranch={defaultBranch}
-          loading={branchStatus === 'loading'}
-          error={branchError}
-          disabled={loading || !isGitHubRepoUrl(repositoryUrl)}
-          placeholderLabel="Inserisci il link del repository"
-          onBranchChange={setBranch}
-          onTouched={() => {
-            branchTouchedRef.current = true;
-          }}
-        />
+        <div>
+          <label className="block text-sm font-medium text-slate-900 mb-2">
+            Branch
+            <span className="ml-2 text-xs font-semibold uppercase text-red-500">Required</span>
+          </label>
+          <BranchSelector
+            branch={branch}
+            branches={branchOptions}
+            defaultBranch={defaultBranch}
+            loading={branchStatus === 'loading'}
+            error={branchError}
+            disabled={loading || !isGitHubRepoUrl(repositoryUrl)}
+            placeholderLabel="Inserisci il link del repository"
+            onBranchChange={setBranch}
+            onTouched={() => {
+              branchTouchedRef.current = true;
+            }}
+          />
+        </div>
 
         <div>
           <div className="flex items-center justify-between mb-3">
             <span className="block text-sm font-medium text-slate-900">
               Environment Variables
+              <span className="ml-2 text-xs font-semibold uppercase text-slate-400">Optional</span>
             </span>
             <div className="flex items-center gap-2">
               <input
@@ -531,6 +740,61 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
         >
           {loading ? 'Creating Team...' : 'Create Team'}
         </button>
+
+        {taskStatus && (
+          <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  Creazione team {taskStatus.teamName}
+                </p>
+                <p className="text-xs text-slate-600">
+                  {taskStatus.status === 'pending'
+                    ? 'In corso...'
+                    : taskStatus.status === 'success'
+                    ? 'Completata'
+                    : 'Errore durante la creazione'}
+                </p>
+              </div>
+              <span
+                className={`text-xs font-semibold uppercase px-2 py-1 rounded-full ${
+                  taskStatus.status === 'success'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : taskStatus.status === 'error'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-blue-100 text-blue-700'
+                }`}
+              >
+                {taskStatus.status}
+              </span>
+            </div>
+            {taskStatus.steps?.length > 0 && (
+              <ul className="mt-3 space-y-2 text-sm">
+                {taskStatus.steps.map((step) => (
+                  <li key={step.id} className="flex items-center justify-between gap-2">
+                    <span className="text-slate-700">{step.label}</span>
+                    <span
+                      className={`text-xs font-semibold uppercase ${
+                        step.status === 'done'
+                          ? 'text-emerald-600'
+                          : step.status === 'error'
+                          ? 'text-red-600'
+                          : step.status === 'in-progress'
+                          ? 'text-blue-600'
+                          : 'text-slate-400'
+                      }`}
+                    >
+                      {step.status.replace('-', ' ')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {taskStatus.message && (
+              <p className="mt-3 text-xs text-slate-500">{taskStatus.message}</p>
+            )}
+          </div>
+        )}
       </div>
     </form>
   );

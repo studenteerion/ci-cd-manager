@@ -71,7 +71,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root[data-theme-pref='system'] {
     --background: #0b1220;
     --foreground: #e2e8f0;
     --surface: #0f172a;
@@ -89,6 +89,7 @@
     --input-bg: #0b1220;
     --input-text: #e2e8f0;
     --focus-ring: #60a5fa;
+    color-scheme: dark;
   }
 }
 

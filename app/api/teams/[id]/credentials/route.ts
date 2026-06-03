@@ -29,6 +29,7 @@ export async function GET(
   return NextResponse.json({
     success: true,
     username: user.username,
+    password: user.password,
     status: user.status,
     role: user.role,
   });

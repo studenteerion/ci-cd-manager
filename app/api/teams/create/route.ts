@@ -19,6 +19,20 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { teamName, repositoryUrl, domain, hostPort, branch, envVariables, envEntries } = body as CreateTeamInput;
 
+    if (!teamName || /\s/.test(teamName)) {
+      return NextResponse.json(
+        { success: false, message: 'Il nome team non può contenere spazi.' },
+        { status: 400 }
+      );
+    }
+
+    if (!domain || /\s/.test(domain)) {
+      return NextResponse.json(
+        { success: false, message: 'Il dominio/subdomain non può contenere spazi.' },
+        { status: 400 }
+      );
+    }
+
     const normalizedEntries = Array.isArray(envEntries)
       ? (envEntries as EnvEntry[])
       : recordToEnvEntries(envVariables || {});

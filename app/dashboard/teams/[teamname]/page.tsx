@@ -1,8 +1,8 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState, useRef } from 'react';
-import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw, Loader2, Terminal, User } from 'lucide-react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { ChevronLeft, Cog, GitBranch, Code2, DownloadCloud, Plus, X, Circle, Eye, EyeOff, Copy, RotateCw, FileText, RefreshCw, Loader2, Terminal, User, Play, Square, Server, MoreVertical, Folder } from 'lucide-react';
 import { useToast } from '@/lib/context/ToastContext';
 import { BranchSelector } from '@/components/BranchSelector';
 import { fetchGitHubBranches, fetchGitHubCommits, isGitHubRepoUrl, CommitInfo } from '@/lib/github/client';
@@ -41,6 +41,8 @@ export default function TeamDetailsPage() {
   const [deploying, setDeploying] = useState(false);
   const [containerStatus, setContainerStatus] = useState<string>('');
   const [containerName, setContainerName] = useState<string>('');
+  const [containerActionLoading, setContainerActionLoading] = useState(false);
+  const [containerActionType, setContainerActionType] = useState<'start' | 'stop' | 'restart' | null>(null);
   const [hostPort, setHostPort] = useState<number | null>(null);
   const [branch, setBranch] = useState('main');
   const [newBranch, setNewBranch] = useState('');
@@ -88,14 +90,31 @@ export default function TeamDetailsPage() {
   const [currentRole, setCurrentRole] = useState<'admin' | 'team' | null>(null);
   const [teamAccountStatus, setTeamAccountStatus] = useState<'active' | 'inactive'>('active');
   const [teamPasswordInput, setTeamPasswordInput] = useState('');
+  const [teamCurrentPassword, setTeamCurrentPassword] = useState('');
   const [teamGeneratedPassword, setTeamGeneratedPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showGeneratedPassword, setShowGeneratedPassword] = useState(false);
   const [credentialsLoading, setCredentialsLoading] = useState(false);
+  const [containerMenuOpen, setContainerMenuOpen] = useState(false);
+  const [containerDialogOpen, setContainerDialogOpen] = useState(false);
+  const [containerDialogMode, setContainerDialogMode] = useState<'remove' | 'remove-volumes' | 'rebuild' | 'recreate' | null>(null);
+  const [containerConfirmInput, setContainerConfirmInput] = useState('');
+  const [containerMaintenanceLoading, setContainerMaintenanceLoading] = useState(false);
+  const containerStatusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const containerStatusAbortRef = useRef<AbortController | null>(null);
+  const containerStatusRequestIdRef = useRef(0);
+  const containerStatusRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchFetchAbortRef = useRef<AbortController | null>(null);
   const branchFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchTouchedRef = useRef(false);
   const commitDefaultBranch = branch || defaultBranch || 'main';
   const commitSelectedBranch = commitBranchOverride.trim() || commitDefaultBranch;
+  const githubWebhookUrl = useMemo(() => {
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed || !isGitHubRepoUrl(trimmed)) return '';
+    const normalized = trimmed.replace(/\.git$/i, '').replace(/\/$/, '');
+    return `${normalized}/settings/hooks/new`;
+  }, [repositoryUrl]);
 
   useEffect(() => {
     loadTeamConfig();
@@ -119,6 +138,7 @@ export default function TeamDetailsPage() {
         const data = await response.json();
         if (data.success) {
           setTeamAccountStatus(data.status || 'active');
+          setTeamCurrentPassword(data.password || '');
         } else {
           addToast(data.message || 'Impossibile caricare le credenziali team', 'error');
         }
@@ -220,6 +240,74 @@ export default function TeamDetailsPage() {
       controller.abort();
     };
   }, [repositoryUrl, branch]);
+
+  const fetchContainerStatus = useCallback(
+    async (options?: { silent?: boolean }) => {
+      containerStatusAbortRef.current?.abort();
+      const controller = new AbortController();
+      containerStatusAbortRef.current = controller;
+      const requestId = ++containerStatusRequestIdRef.current;
+
+      try {
+        const response = await fetch(`/api/teams/${teamName}/status`, {
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        const data = await response.json();
+        if (controller.signal.aborted || requestId !== containerStatusRequestIdRef.current) return;
+
+        if (data?.status) {
+          setContainerStatus(data.status);
+        } else if (!options?.silent) {
+          setContainerStatus('unknown');
+        }
+
+        if (typeof data?.containerName === 'string') {
+          setContainerName(data.containerName);
+        }
+      } catch (error) {
+        if ((error as Error).name === 'AbortError') return;
+        if (!options?.silent) {
+          setContainerStatus((prev) => prev || 'unknown');
+        }
+      }
+    },
+    [teamName]
+  );
+
+  useEffect(() => {
+    if (!teamName) return;
+
+    const refresh = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetchContainerStatus({ silent: true });
+    };
+
+    refresh();
+
+    if (containerStatusIntervalRef.current) {
+      clearInterval(containerStatusIntervalRef.current);
+    }
+    containerStatusIntervalRef.current = setInterval(refresh, 4000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      if (containerStatusIntervalRef.current) {
+        clearInterval(containerStatusIntervalRef.current);
+      }
+      if (containerStatusRetryRef.current) {
+        clearTimeout(containerStatusRetryRef.current);
+      }
+      containerStatusAbortRef.current?.abort();
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [teamName, fetchContainerStatus]);
 
   const handleAddEnvVar = () => {
     setEnvVariables([...envVariables, { key: '', value: '' }]);
@@ -337,10 +425,14 @@ export default function TeamDetailsPage() {
 
       if (statusData.status) {
         setContainerStatus(statusData.status);
+      } else {
+        setContainerStatus('unknown');
       }
 
       if (statusData.containerName) {
         setContainerName(statusData.containerName);
+      } else {
+        setContainerName('');
       }
 
       if (portData.success && typeof portData.hostPort === 'number') {
@@ -471,6 +563,45 @@ export default function TeamDetailsPage() {
       console.error(err);
     } finally {
       setDeploying(false);
+    }
+  };
+
+  const handleContainerAction = async (action: 'start' | 'stop' | 'restart') => {
+    setContainerActionLoading(true);
+    setContainerActionType(action);
+    try {
+      const response = await fetch(`/api/teams/${teamName}/container`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        addToast(
+          action === 'start'
+            ? 'Container avviato'
+            : action === 'restart'
+            ? 'Container riavviato'
+            : 'Container fermato',
+          'success'
+        );
+        await loadTeamConfig();
+        fetchContainerStatus({ silent: true });
+        if (containerStatusRetryRef.current) {
+          clearTimeout(containerStatusRetryRef.current);
+        }
+        containerStatusRetryRef.current = setTimeout(() => {
+          fetchContainerStatus({ silent: true });
+        }, 2000);
+      } else {
+        addToast(data.message || 'Operazione container fallita', 'error');
+      }
+    } catch (err) {
+      addToast('Operazione container fallita', 'error');
+      console.error(err);
+    } finally {
+      setContainerActionLoading(false);
+      setContainerActionType(null);
     }
   };
 
@@ -645,6 +776,7 @@ export default function TeamDetailsPage() {
       const data = await response.json();
       if (data.success) {
         setTeamGeneratedPassword(data.password || '');
+        setTeamCurrentPassword(data.password || '');
         addToast('Password generata con successo', 'success');
       } else {
         addToast(data.message || 'Generazione password fallita', 'error');
@@ -671,7 +803,9 @@ export default function TeamDetailsPage() {
       });
       const data = await response.json();
       if (data.success) {
-        setTeamGeneratedPassword(data.password || teamPasswordInput.trim());
+        const nextPassword = data.password || teamPasswordInput.trim();
+        setTeamGeneratedPassword(nextPassword);
+        setTeamCurrentPassword(nextPassword);
         setTeamPasswordInput('');
         addToast('Password aggiornata con successo', 'success');
       } else {
@@ -704,6 +838,43 @@ export default function TeamDetailsPage() {
       addToast('Aggiornamento stato fallito', 'error');
     } finally {
       setCredentialsLoading(false);
+    }
+  };
+
+  const openContainerDialog = (mode: 'remove' | 'remove-volumes' | 'rebuild' | 'recreate') => {
+    setContainerDialogMode(mode);
+    setContainerConfirmInput('');
+    setContainerDialogOpen(true);
+  };
+
+  const handleContainerMaintenance = async (action: 'remove' | 'remove-volumes' | 'rebuild' | 'recreate') => {
+    setContainerMaintenanceLoading(true);
+    try {
+      const response = await fetch(`/api/teams/${teamName}/container-maintenance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!data.success) {
+        addToast(data.message || 'Operazione container fallita', 'error');
+        return;
+      }
+      addToast(data.message || 'Operazione completata', 'success');
+      await loadTeamConfig();
+
+      if (action === 'remove-volumes') {
+        if (data.requiresRebuild) {
+          openContainerDialog('rebuild');
+        } else if (data.requiresRecreate) {
+          openContainerDialog('recreate');
+        }
+      }
+    } catch (error) {
+      addToast('Operazione container fallita', 'error');
+      console.error(error);
+    } finally {
+      setContainerMaintenanceLoading(false);
     }
   };
 
@@ -824,83 +995,184 @@ export default function TeamDetailsPage() {
       <div className="w-full max-w-none">
         {/* Header */}
         <div className="mb-8 flex items-center gap-4">
-          {currentRole !== 'team' && (
-            <button
-              onClick={() => router.push('/dashboard/teams')}
-              className="h-10 w-10 leading-none rounded-lg border border-slate-200 bg-white hover:bg-slate-100 shadow-sm transition flex items-center justify-center"
-              aria-label="Torna all'elenco team"
-            >
-              <ChevronLeft size={24} className="text-slate-600" />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {currentRole !== 'team' && (
+              <button
+                onClick={() => router.push('/dashboard/teams')}
+                className="h-10 w-10 leading-none rounded-lg border border-slate-200 bg-white hover:bg-slate-100 shadow-sm transition flex items-center justify-center"
+                aria-label="Torna all'elenco team"
+              >
+                <ChevronLeft size={24} className="text-slate-600" />
+              </button>
+            )}
+          </div>
           <div className="flex-1">
             <h1 className="text-4xl font-bold text-slate-900">{teamName}</h1>
           </div>
-          {containerStatus && (
-            <div className="flex items-center gap-3 bg-white px-4 py-3 rounded-lg shadow-sm border border-slate-200">
-              <Circle
-                size={12}
-                className={`fill-current ${
-                  containerStatus === 'running'
-                    ? 'text-green-500'
-                    : containerStatus === 'stopped' || containerStatus === 'exited'
-                    ? 'text-red-500'
-                    : containerStatus === 'restarting'
-                    ? 'text-yellow-500'
-                    : 'text-slate-400'
-                }`}
-              />
-              <div className="flex flex-col">
-                <span className="text-sm font-medium text-slate-700 capitalize">
-                  {containerStatus}
-                </span>
-                {containerName && (
-                  <span className="text-xs text-slate-500">{containerName}</span>
-                )}
-              </div>
-              <button
-                onClick={() => {
-                  const nextOpen = !logsOpen;
-                  setLogsOpen(nextOpen);
-                  if (nextOpen && !logsText) {
-                    fetchLogs();
-                  }
-                }}
-                className="ml-2 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition leading-none"
-              >
-                <FileText size={14} />
-                Logs
-              </button>
-            </div>
-          )}
         </div>
         {/* end Info Card */}
 
-      {logsOpen && (
-        <div className="mb-8 bg-white rounded-lg shadow-md p-6 max-w-full overflow-x-hidden">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-slate-900 flex items-center gap-2">
-              <FileText size={20} className="text-slate-500" />
-              Container Logs
-            </h2>
+      {containerStatus && (
+        <div className="mb-8 bg-white rounded-lg shadow-md p-6 relative">
+          <div className="flex items-center gap-2 mb-4">
+            <Server size={20} className="text-indigo-500" />
+            <h2 className="text-xl font-semibold text-slate-900">Container</h2>
+          </div>
+          {currentRole === 'admin' && (
+            <div className="absolute right-4 top-4">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setContainerMenuOpen((prev) => !prev)}
+                  className="h-9 w-9 leading-none rounded-lg border border-slate-200 bg-white hover:bg-slate-100 shadow-sm transition flex items-center justify-center"
+                  aria-label="Azioni container"
+                >
+                  <MoreVertical size={18} className="text-slate-600" />
+                </button>
+                {containerMenuOpen && (
+                  <>
+                    <button
+                      type="button"
+                      className="fixed inset-0 z-30 cursor-default"
+                      onClick={() => setContainerMenuOpen(false)}
+                      aria-label="Chiudi menu container"
+                    />
+                    <div className="absolute right-0 mt-2 w-64 rounded-lg border border-slate-200 bg-white shadow-lg z-40">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setContainerMenuOpen(false);
+                          openContainerDialog('remove');
+                        }}
+                        className="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Elimina container
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setContainerMenuOpen(false);
+                          openContainerDialog('remove-volumes');
+                        }}
+                        className="w-full px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50"
+                      >
+                        Elimina container e volumi associati
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          <p className="text-slate-600 mb-4">
+            Gestisci lo stato del container e accedi rapidamente ai log.
+          </p>
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <Circle
+              size={12}
+              className={`fill-current ${
+                containerStatus === 'running'
+                  ? 'text-green-500'
+                  : containerStatus === 'stopped' || containerStatus === 'exited'
+                  ? 'text-red-500'
+                  : containerStatus === 'restarting'
+                  ? 'text-yellow-500'
+                  : 'text-slate-400'
+              }`}
+            />
+            <div className="flex flex-col">
+              <span className="text-sm font-medium text-slate-700 capitalize">
+                {containerStatus}
+              </span>
+              {containerName && (
+                <span className="text-xs text-slate-500">{containerName}</span>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
             <button
-              onClick={fetchLogs}
-              disabled={logsLoading}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50 leading-none"
+              onClick={() => {
+                const nextOpen = !logsOpen;
+                setLogsOpen(nextOpen);
+                if (nextOpen && !logsText) {
+                  fetchLogs();
+                }
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition leading-none"
             >
-              {logsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-              Refresh
+              <FileText size={16} />
+              {logsOpen ? 'Nascondi logs' : 'Logs container'}
+            </button>
+            <button
+              onClick={() => handleContainerAction('start')}
+              disabled={
+                containerActionLoading ||
+                !['stopped', 'exited', 'unknown', 'created'].includes(containerStatus)
+              }
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg transition leading-none disabled:opacity-50"
+            >
+              <Play size={16} />
+              Avvia
+              {containerActionLoading && containerActionType === 'start' && (
+                <Loader2 size={14} className="animate-spin" />
+              )}
+            </button>
+            <button
+              onClick={() => handleContainerAction('restart')}
+              disabled={
+                containerActionLoading ||
+                !['running', 'restarting', 'exited', 'stopped', 'created'].includes(containerStatus)
+              }
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg transition leading-none disabled:opacity-50"
+            >
+              <RotateCw size={16} />
+              Riavvia
+              {containerActionLoading && containerActionType === 'restart' && (
+                <Loader2 size={14} className="animate-spin" />
+              )}
+            </button>
+            <button
+              onClick={() => handleContainerAction('stop')}
+              disabled={
+                containerActionLoading ||
+                !['running', 'restarting'].includes(containerStatus)
+              }
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition leading-none disabled:opacity-50"
+            >
+              <Square size={16} />
+              Stop
+              {containerActionLoading && containerActionType === 'stop' && (
+                <Loader2 size={14} className="animate-spin" />
+              )}
             </button>
           </div>
-          {logsError && (
-            <div className="mb-3 text-sm text-red-600">{logsError}</div>
-          )}
-          <div
-            ref={logsRef}
-            className="border border-slate-200 rounded-lg bg-slate-900 text-slate-100 text-xs font-mono p-4 h-64 overflow-auto whitespace-pre-wrap break-all"
-          >
-            {logsLoading ? 'Loading logs...' : logsText || 'No logs available.'}
-          </div>
+            {logsOpen && (
+              <div className="mt-4 border-t border-slate-200 pt-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <FileText size={18} className="text-slate-500" />
+                    Logs container
+                  </h3>
+                  <button
+                    onClick={fetchLogs}
+                    disabled={logsLoading}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50 leading-none"
+                  >
+                    {logsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                    Refresh
+                  </button>
+                </div>
+                {logsError && (
+                  <div className="mb-3 text-sm text-red-600">{logsError}</div>
+                )}
+                <div
+                  ref={logsRef}
+                  className="border border-slate-200 rounded-lg bg-slate-900 text-slate-100 text-xs font-mono p-4 h-64 overflow-auto whitespace-pre-wrap break-all"
+                >
+                  {logsLoading ? 'Loading logs...' : logsText || 'No logs available.'}
+                </div>
+              </div>
+            )}
         </div>
       )}
 
@@ -910,8 +1182,11 @@ export default function TeamDetailsPage() {
           <DownloadCloud size={20} className="text-emerald-500" />
           Deploy
         </h2>
-        <p className="text-slate-600 mb-4">
+        <p className="text-slate-600 mb-2">
           Trigger a new deployment of this team using the current configuration
+        </p>
+        <p className="text-xs text-slate-500 mb-4">
+          I deploy automatici via webhook avviano comunque il container, anche se era stato fermato manualmente.
         </p>
         <div className="flex flex-wrap gap-3">
           <button
@@ -1131,11 +1406,30 @@ export default function TeamDetailsPage() {
 
   {/* Webhook Secret Configuration */}
   {currentRole && (
-  <div className="mb-8 bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-xl font-semibold text-slate-900 mb-4 flex items-center gap-2">
-          <Cog size={20} className="text-blue-500" />
-          Webhook Secret
-        </h2>
+  <div className="mb-8 bg-white rounded-lg shadow-md p-6 relative">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h2 className="text-xl font-semibold text-slate-900 flex items-center gap-2">
+            <Cog size={20} className="text-blue-500" />
+            Webhook Secret
+          </h2>
+          <a
+            href={githubWebhookUrl || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition leading-none ${
+              githubWebhookUrl
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+            }`}
+            onClick={(event) => {
+              if (!githubWebhookUrl) {
+                event.preventDefault();
+              }
+            }}
+          >
+            Configure on GitHub
+          </a>
+        </div>
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -1156,7 +1450,7 @@ export default function TeamDetailsPage() {
               </button>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Questo URL verrà usato dai webhook
+              Questo URL verrà usato dai webhook. Imposta il <span className="font-medium">Content-Type</span> su <span className="font-medium">application/json</span>.
             </p>
           </div>
           <div>
@@ -1206,63 +1500,128 @@ export default function TeamDetailsPage() {
             <User size={20} className="text-emerald-500" />
             Credenziali team
           </h2>
-          <div className="space-y-4">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-              <p className="text-xs text-slate-500">Username team</p>
-              <p className="text-sm font-mono text-slate-900">{teamName}</p>
-              <p className="text-xs text-slate-500 mt-1">
-                Usa questo username per accedere con le credenziali del team.
-              </p>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs text-slate-500">Username team</p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-sm font-mono text-slate-900 truncate">{teamName}</p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(teamName);
+                        addToast('Username copiato', 'success');
+                      } catch (error) {
+                        addToast('Impossibile copiare lo username', 'error');
+                      }
+                    }}
+                    className="px-2.5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition flex items-center justify-center"
+                    aria-label="Copia username"
+                  >
+                    <Copy size={16} />
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs text-slate-500">Password corrente</p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-sm font-mono text-slate-900 truncate">
+                    {showCurrentPassword
+                      ? teamCurrentPassword || 'Non disponibile'
+                      : '••••••••••••'}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!teamCurrentPassword) return;
+                        try {
+                          await navigator.clipboard.writeText(teamCurrentPassword);
+                          addToast('Password copiata', 'success');
+                        } catch (error) {
+                          addToast('Impossibile copiare la password', 'error');
+                        }
+                      }}
+                      disabled={!teamCurrentPassword}
+                      className="px-2.5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition flex items-center justify-center disabled:opacity-50"
+                      aria-label="Copia password"
+                    >
+                      <Copy size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPassword((prev) => !prev)}
+                      disabled={!teamCurrentPassword}
+                      className="px-2.5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition flex items-center justify-center disabled:opacity-50"
+                      aria-label={showCurrentPassword ? 'Nascondi password' : 'Mostra password'}
+                    >
+                      {showCurrentPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
               <div>
                 <p className="text-sm text-slate-700">
                   Stato account: <span className="font-medium capitalize">{teamAccountStatus}</span>
                 </p>
                 <p className="text-xs text-slate-500">Se inattivo, il team non può effettuare il login.</p>
               </div>
-              <button
-                type="button"
-                onClick={handleToggleTeamStatus}
-                disabled={credentialsLoading}
-                className={`px-4 py-2 rounded-lg text-white transition font-medium ${teamAccountStatus === 'active'
-                  ? 'bg-slate-600 hover:bg-slate-700'
-                  : 'bg-emerald-600 hover:bg-emerald-700'} ${credentialsLoading ? 'opacity-50' : ''}`}
-              >
-                {teamAccountStatus === 'active' ? 'Disattiva account' : 'Attiva account'}
-              </button>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-medium text-slate-600">
+                  {teamAccountStatus === 'active' ? 'Attivo' : 'Inattivo'}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={teamAccountStatus === 'active'}
+                  onClick={handleToggleTeamStatus}
+                  disabled={credentialsLoading}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${teamAccountStatus === 'active'
+                    ? 'bg-emerald-600'
+                    : 'bg-slate-400'} ${credentialsLoading ? 'opacity-50' : ''}`}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${teamAccountStatus === 'active'
+                      ? 'translate-x-6'
+                      : 'translate-x-1'}`}
+                  />
+                </button>
+              </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Nuova password manuale
-                </label>
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-4">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Nuova password manuale
+              </label>
+              <div className="flex flex-col gap-3 md:flex-row md:items-end">
                 <input
                   type="text"
                   value={teamPasswordInput}
                   onChange={(e) => setTeamPasswordInput(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900"
+                  className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900"
                   placeholder="Inserisci password"
                   disabled={credentialsLoading}
                 />
-              </div>
-              <div className="flex items-end gap-2">
-                <button
-                  type="button"
-                  onClick={handleSaveTeamPassword}
-                  disabled={credentialsLoading}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition font-medium"
-                >
-                  Salva password
-                </button>
-                <button
-                  type="button"
-                  onClick={handleGenerateTeamPassword}
-                  disabled={credentialsLoading}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium"
-                >
-                  Genera password
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveTeamPassword}
+                    disabled={credentialsLoading}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition font-medium"
+                  >
+                    Salva password
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGenerateTeamPassword}
+                    disabled={credentialsLoading}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium"
+                  >
+                    Genera password
+                  </button>
+                </div>
               </div>
             </div>
             {teamGeneratedPassword && (
@@ -1356,6 +1715,125 @@ export default function TeamDetailsPage() {
               >
                 {deleting && <Loader2 size={16} className="mr-2 animate-spin" />}
                 {deleting ? 'Eliminazione...' : 'Elimina definitivamente'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {containerDialogOpen && containerDialogMode && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <h3 className="text-lg font-semibold text-slate-900">
+              {containerDialogMode === 'remove'
+                ? 'Elimina container'
+                : containerDialogMode === 'remove-volumes'
+                ? 'Elimina container e volumi'
+                : containerDialogMode === 'rebuild'
+                ? 'Rebuild container'
+                : 'Ricrea container'}
+            </h3>
+            <button
+              type="button"
+              onClick={() => {
+                setContainerDialogOpen(false);
+                setContainerDialogMode(null);
+              }}
+              className="text-slate-600 hover:text-slate-900"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="p-4 space-y-4">
+            {containerDialogMode === 'remove' && (
+              <p className="text-sm text-slate-700">
+                Questa operazione rimuove il container attuale ma mantiene i volumi e i dati persistenti.
+                I webhook e le automazioni restano configurati; il container potrà essere ricreato con il prossimo deploy.
+              </p>
+            )}
+            {containerDialogMode === 'remove-volumes' && (
+              <p className="text-sm text-slate-700">
+                Questa operazione elimina il container e i volumi associati. Tutti i dati persistenti verranno cancellati.
+                I webhook restano configurati, ma i dati dovranno essere rigenerati dopo la ricreazione del container.
+              </p>
+            )}
+            {containerDialogMode === 'rebuild' && (
+              <p className="text-sm text-slate-700">
+                I volumi sono stati eliminati e le immagini non sono disponibili. È necessario eseguire un rebuild per
+                ricreare il container. Vuoi procedere ora?
+              </p>
+            )}
+            {containerDialogMode === 'recreate' && (
+              <p className="text-sm text-slate-700">
+                Il container è stato rimosso. È necessario ricrearlo per ripristinare il servizio.
+                Vuoi procedere con la ricreazione adesso?
+              </p>
+            )}
+
+            <div>
+              <p className="text-xs text-slate-500 mb-2">
+                Digita la frase di conferma per continuare:
+              </p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-mono text-slate-700">
+                {containerDialogMode === 'remove'
+                  ? 'ELIMINA CONTAINER'
+                  : containerDialogMode === 'remove-volumes'
+                  ? 'ELIMINA CONTAINER E VOLUMI'
+                  : containerDialogMode === 'rebuild'
+                  ? 'REBUILD CONTAINER'
+                  : 'RICREA CONTAINER'}
+              </div>
+              <input
+                type="text"
+                value={containerConfirmInput}
+                onChange={(e) => setContainerConfirmInput(e.target.value)}
+                className="mt-3 w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-slate-900"
+                placeholder="Scrivi la frase di conferma"
+                disabled={containerMaintenanceLoading}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setContainerDialogOpen(false);
+                  setContainerDialogMode(null);
+                }}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-100 transition"
+                disabled={containerMaintenanceLoading}
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const required = containerDialogMode === 'remove'
+                    ? 'ELIMINA CONTAINER'
+                    : containerDialogMode === 'remove-volumes'
+                    ? 'ELIMINA CONTAINER E VOLUMI'
+                    : containerDialogMode === 'rebuild'
+                    ? 'REBUILD CONTAINER'
+                    : 'RICREA CONTAINER';
+                  if (containerConfirmInput.trim() !== required) return;
+                  setContainerDialogOpen(false);
+                  await handleContainerMaintenance(containerDialogMode);
+                  setContainerDialogMode(null);
+                }}
+                disabled={
+                  containerMaintenanceLoading ||
+                  containerConfirmInput.trim() !== (containerDialogMode === 'remove'
+                    ? 'ELIMINA CONTAINER'
+                    : containerDialogMode === 'remove-volumes'
+                    ? 'ELIMINA CONTAINER E VOLUMI'
+                    : containerDialogMode === 'rebuild'
+                    ? 'REBUILD CONTAINER'
+                    : 'RICREA CONTAINER')
+                }
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition disabled:opacity-50 font-medium"
+              >
+                {containerMaintenanceLoading ? 'Operazione...' : 'Conferma'}
               </button>
             </div>
           </div>

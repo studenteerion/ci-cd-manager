@@ -26,7 +26,7 @@ const getSystemTheme = (): ResolvedTheme => {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemePreference>('system');
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>('light');
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getSystemTheme());
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
