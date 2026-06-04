@@ -59,6 +59,11 @@ export default function TeamDetailsPage() {
   const [logsText, setLogsText] = useState('');
   const [logsError, setLogsError] = useState('');
   const logsRef = useRef<HTMLDivElement | null>(null);
+  const [gitLogsOpen, setGitLogsOpen] = useState(false);
+  const [gitLogsLoading, setGitLogsLoading] = useState(false);
+  const [gitLogsText, setGitLogsText] = useState('');
+  const [gitLogsError, setGitLogsError] = useState('');
+  const gitLogsRef = useRef<HTMLDivElement | null>(null);
   const [deployLogsOpen, setDeployLogsOpen] = useState(false);
   const [deployLogsLoading, setDeployLogsLoading] = useState(false);
   const [deployLogsText, setDeployLogsText] = useState('');
@@ -156,6 +161,12 @@ export default function TeamDetailsPage() {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
   }, [logsOpen, logsText]);
+
+  useEffect(() => {
+    if (gitLogsOpen && gitLogsRef.current) {
+      gitLogsRef.current.scrollTop = gitLogsRef.current.scrollHeight;
+    }
+  }, [gitLogsOpen, gitLogsText]);
 
   useEffect(() => {
     if (deployLogsOpen && deployLogsRef.current && deployLogsAutoScrollRef.current) {
@@ -478,6 +489,28 @@ export default function TeamDetailsPage() {
       setLogsLoading(false);
       if (logsRef.current) {
         logsRef.current.scrollTop = logsRef.current.scrollHeight;
+      }
+    }
+  };
+
+  const fetchGitLogs = async () => {
+    setGitLogsLoading(true);
+    setGitLogsError('');
+    try {
+      const response = await fetch(`/api/teams/${teamName}/git-logs?tail=50`);
+      const data = await response.json();
+      if (data.success) {
+        setGitLogsText(data.logs || '');
+      } else {
+        setGitLogsError(data.message || 'Failed to load git logs');
+      }
+    } catch (err) {
+      setGitLogsError('Failed to load git logs');
+      console.error(err);
+    } finally {
+      setGitLogsLoading(false);
+      if (gitLogsRef.current) {
+        gitLogsRef.current.scrollTop = gitLogsRef.current.scrollHeight;
       }
     }
   };
@@ -1142,6 +1175,19 @@ export default function TeamDetailsPage() {
               {logsOpen ? 'Nascondi logs' : 'Logs container'}
             </button>
             <button
+              onClick={() => {
+                const nextOpen = !gitLogsOpen;
+                setGitLogsOpen(nextOpen);
+                if (nextOpen && !gitLogsText) {
+                  fetchGitLogs();
+                }
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition leading-none"
+            >
+              <GitBranch size={16} />
+              {gitLogsOpen ? 'Nascondi git logs' : 'Git logs'}
+            </button>
+            <button
               onClick={() => handleContainerAction('start')}
               disabled={
                 containerActionLoading ||
@@ -1211,6 +1257,39 @@ export default function TeamDetailsPage() {
                 </div>
               </div>
             )}
+        </div>
+      )}
+
+      {/* Git Logs Section */}
+      {gitLogsOpen && (
+        <div className="mb-8 border border-slate-200 rounded-lg bg-slate-900 text-slate-100 max-w-full w-full overflow-x-hidden">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700">
+            <span className="text-sm font-medium">git logs</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchGitLogs}
+                disabled={gitLogsLoading}
+                className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition"
+              >
+                Refresh
+              </button>
+              <button
+                onClick={() => setGitLogsOpen(false)}
+                className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+          {gitLogsError && (
+            <div className="px-4 py-2 text-xs text-red-300">{gitLogsError}</div>
+          )}
+          <div
+            ref={gitLogsRef}
+            className="px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all max-h-64 overflow-auto min-w-0"
+          >
+            {gitLogsLoading ? 'Loading git logs...' : gitLogsText || 'No git logs available.'}
+          </div>
         </div>
       )}
 

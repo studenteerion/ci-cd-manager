@@ -527,9 +527,13 @@ async function buildComposeBase(teamDir: string): Promise<string> {
     composeArgs.push('-f', `"${overridePath}"`);
   }
 
-  return composeArgs.length > 0
-    ? `docker compose ${composeArgs.join(' ')}`
-    : 'docker compose';
+  // Ensure we always have at least one -f flag pointing to a valid compose file
+  if (composeArgs.length === 0) {
+    // Return just 'docker compose' which will use default docker-compose.yml
+    return 'docker compose';
+  }
+
+  return `docker compose ${composeArgs.join(' ')}`;
 }
 
 export async function restartContainers(teamDir: string): Promise<void> {

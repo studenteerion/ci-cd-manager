@@ -47,6 +47,7 @@ type TeamCreateStatusFile = {
   message?: string;
   startedAt: string;
   updatedAt: string;
+  gitLogs?: string;
 };
 
 const TEAM_TASK_STORAGE_KEY = 'team-create-task';
@@ -792,6 +793,16 @@ export function CreateTeamForm({ onSuccess }: CreateTeamFormProps) {
             )}
             {taskStatus.message && (
               <p className="mt-3 text-xs text-slate-500">{taskStatus.message}</p>
+            )}
+            {taskStatus.gitLogs && (
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-900 text-slate-100 max-w-full w-full overflow-x-hidden">
+                <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700">
+                  <span className="text-sm font-medium">git logs</span>
+                </div>
+                <div className="px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all max-h-64 overflow-auto min-w-0">
+                  {taskStatus.gitLogs}
+                </div>
+              </div>
             )}
           </div>
         )}
